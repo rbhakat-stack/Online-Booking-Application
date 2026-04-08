@@ -1,0 +1,572 @@
+-- ============================================================
+-- EXTENSIONS
+-- ============================================================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "btree_gist"; -- Required for EXCLUDE USING GIST
+
+-- ============================================================
+-- ENUMS
+-- ============================================================
+
+CREATE TYPE user_role AS ENUM ('player', 'facility_admin', 'super_admin');
+CREATE TYPE membership_type AS ENUM ('none', 'basic', 'premium', 'corporate');
+CREATE TYPE court_status AS ENUM ('active', 'inactive', 'maintenance');
+CREATE TYPE booking_status AS ENUM (
+    'hold',             -- Slot reserved, payment pending
+    'pending_payment',  -- Stripe session created
+    'confirmed',        -- Payment verified
+    'cancelled',        -- Cancelled by user or admin
+    'refunded',         -- Refund processed
+    'blocked',          -- Admin block (maintenance/event)
+    'expired',          -- Hold expired without payment
+    'no_show'           -- User did not show
+);
+CREATE TYPE booking_type AS ENUM ('standard', 'full_day', 'event', 'blocked');
+CREATE TYPE refund_policy_type AS ENUM ('standard', 'strict', 'flexible', 'no_refund');
+CREATE TYPE pricing_rule_type AS ENUM ('base', 'peak', 'off_peak', 'weekend', 'event', 'membership');
+CREATE TYPE day_of_week AS ENUM ('monday','tuesday','wednesday','thursday','friday','saturday','sunday');
+CREATE TYPE payment_status AS ENUM ('pending', 'completed', 'failed', 'refunded', 'partial_refund');
+CREATE TYPE refund_status AS ENUM ('none', 'pending', 'partial', 'full');
+CREATE TYPE closure_type AS ENUM ('one_time', 'recurring');
+CREATE TYPE inquiry_status AS ENUM ('pending', 'approved', 'denied', 'cancelled');
+
+-- ============================================================
+-- TABLE 1: USER PROFILES
+-- Extends Supabase auth.users with application-level fields
+-- ============================================================
+
+CREATE TABLE user_profiles (
+    id              UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    full_name       TEXT NOT NULL,
+    email           TEXT NOT NULL,                  -- Denormalized from auth.users for queries
+    phone           TEXT,
+    role            user_role NOT NULL DEFAULT 'player',
+    membership_type membership_type NOT NULL DEFAULT 'none',
+    waiver_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+    waiver_accepted_at TIMESTAMPTZ,
+    stripe_customer_id TEXT,                        -- Stripe customer reference
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 2: FACILITIES
+-- Top-level tenant entity
+-- ============================================================
+
+CREATE TABLE facilities (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name            TEXT NOT NULL,
+    slug            TEXT NOT NULL UNIQUE,           -- URL-safe identifier
+    address         TEXT,
+    city            TEXT,
+    state           TEXT,
+    zip_code        TEXT,
+    phone           TEXT,
+    email           TEXT,
+    website         TEXT,
+    logo_url        TEXT,
+    timezone        TEXT NOT NULL DEFAULT 'America/New_York',
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 3: FACILITY ADMINS
+-- Maps users to facilities they can administer
+-- ============================================================
+
+CREATE TABLE facility_admins (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    facility_id     UUID NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+    granted_by      UUID REFERENCES auth.users(id),
+    granted_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    UNIQUE (user_id, facility_id)
+);
+
+-- ============================================================
+-- TABLE 4: FACILITY SETTINGS
+-- One row per facility — all configurable booking rules
+-- ============================================================
+
+CREATE TABLE facility_settings (
+    id                              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id                     UUID NOT NULL UNIQUE REFERENCES facilities(id) ON DELETE CASCADE,
+
+    -- Booking rules
+    min_booking_minutes             INTEGER NOT NULL DEFAULT 60,
+    booking_increment_minutes       INTEGER NOT NULL DEFAULT 30,
+    max_booking_hours               INTEGER NOT NULL DEFAULT 4,
+    buffer_minutes_between_bookings INTEGER NOT NULL DEFAULT 0,
+
+    -- Availability window
+    booking_window_days             INTEGER NOT NULL DEFAULT 30,
+
+    -- Cancellation / refund
+    cancellation_window_hours       INTEGER NOT NULL DEFAULT 24,   -- Full refund cutoff
+    partial_refund_window_hours     INTEGER NOT NULL DEFAULT 12,   -- 50% refund cutoff
+    refund_policy_type              refund_policy_type NOT NULL DEFAULT 'standard',
+
+    -- Feature flags
+    full_day_event_requires_approval BOOLEAN NOT NULL DEFAULT TRUE,
+    allow_waitlist                  BOOLEAN NOT NULL DEFAULT FALSE,
+    allow_auto_assign_court         BOOLEAN NOT NULL DEFAULT TRUE,
+
+    -- Hold settings
+    hold_expiry_minutes             INTEGER NOT NULL DEFAULT 10,
+
+    -- Tax / fees (placeholders)
+    tax_rate_percent                NUMERIC(5,2) NOT NULL DEFAULT 0.00,
+    booking_fee_flat                NUMERIC(10,2) NOT NULL DEFAULT 0.00,
+
+    created_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 5: FACILITY OPERATING HOURS
+-- One row per (facility, day_of_week)
+-- Stored as local TIME values — converted to UTC at query time
+-- ============================================================
+
+CREATE TABLE facility_operating_hours (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id     UUID NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+    day_of_week     day_of_week NOT NULL,
+    is_open         BOOLEAN NOT NULL DEFAULT TRUE,
+    open_time       TIME,                           -- Local time (e.g. 08:00)
+    close_time      TIME,                           -- Local time (e.g. 22:00)
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (facility_id, day_of_week),
+    -- Constraint: if is_open, times must be provided and valid
+    CONSTRAINT valid_hours CHECK (
+        (is_open = FALSE) OR
+        (open_time IS NOT NULL AND close_time IS NOT NULL AND open_time < close_time)
+    )
+);
+
+-- ============================================================
+-- TABLE 6: FACILITY CLOSURES
+-- One-time or recurring closures (holidays, maintenance windows)
+-- ============================================================
+
+CREATE TABLE facility_closures (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id     UUID NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+    closure_type    closure_type NOT NULL DEFAULT 'one_time',
+
+    -- For one_time closures
+    closure_date    DATE,
+
+    -- For recurring closures (e.g., every Sunday 8–10 AM)
+    recur_day_of_week  day_of_week,
+    recur_start_time   TIME,
+    recur_end_time     TIME,
+    recur_start_date   DATE,                        -- When recurrence begins
+    recur_end_date     DATE,                        -- When recurrence ends (NULL = indefinite)
+
+    -- Partial-day closure times (NULL = entire day)
+    start_time      TIME,
+    end_time        TIME,
+
+    reason          TEXT,
+    created_by      UUID REFERENCES auth.users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT valid_one_time CHECK (
+        closure_type != 'one_time' OR closure_date IS NOT NULL
+    ),
+    CONSTRAINT valid_recurring CHECK (
+        closure_type != 'recurring' OR recur_day_of_week IS NOT NULL
+    )
+);
+
+-- ============================================================
+-- TABLE 7: COURTS
+-- Physical or virtual courts within a facility
+-- ============================================================
+
+CREATE TABLE courts (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id     UUID NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,                  -- e.g., "Court A", "Badminton 1"
+    sport_type      TEXT NOT NULL,                  -- e.g., 'pickleball', 'badminton', 'tennis', 'karate'
+    description     TEXT,
+    indoor          BOOLEAN NOT NULL DEFAULT TRUE,
+    status          court_status NOT NULL DEFAULT 'active',
+    display_order   INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (facility_id, name)
+);
+
+-- ============================================================
+-- TABLE 8: PRICING RULES
+-- Flexible, priority-ordered pricing per facility
+-- Applied in order: event > membership > peak/off_peak > base
+-- ============================================================
+
+CREATE TABLE pricing_rules (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id     UUID NOT NULL REFERENCES facilities(id) ON DELETE CASCADE,
+    rule_type       pricing_rule_type NOT NULL,
+    name            TEXT NOT NULL,                  -- Human label (e.g., "Weekday Peak")
+    description     TEXT,
+
+    -- Applicability filters (NULL = applies to all)
+    sport_type      TEXT,                           -- NULL = all sports
+    court_id        UUID REFERENCES courts(id),     -- NULL = all courts
+
+    -- Time-based applicability
+    applies_to_days  day_of_week[],                 -- NULL = all days
+    peak_start_time  TIME,                          -- Local time
+    peak_end_time    TIME,                          -- Local time
+
+    -- Pricing
+    price_per_hour  NUMERIC(10,2) NOT NULL,
+    price_full_day  NUMERIC(10,2),                  -- For full-day/event bookings
+
+    -- Priority: higher wins when multiple rules match
+    priority        INTEGER NOT NULL DEFAULT 0,
+
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 9: PROMO CODES
+-- Platform-level discount codes
+-- ============================================================
+
+CREATE TABLE promo_codes (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id         UUID REFERENCES facilities(id),  -- NULL = platform-wide
+    code                TEXT NOT NULL UNIQUE,
+    description         TEXT,
+    discount_type       TEXT NOT NULL CHECK (discount_type IN ('percent', 'flat')),
+    discount_value      NUMERIC(10,2) NOT NULL,
+    max_uses            INTEGER,                         -- NULL = unlimited
+    used_count          INTEGER NOT NULL DEFAULT 0,
+    valid_from          TIMESTAMPTZ,
+    valid_until         TIMESTAMPTZ,
+    is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by          UUID REFERENCES auth.users(id),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 10: BOOKING HOLDS
+-- Temporary slot reservation during payment flow
+-- Expires automatically after hold_expiry_minutes
+-- ============================================================
+
+CREATE TABLE booking_holds (
+    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id             UUID NOT NULL REFERENCES facilities(id),
+    court_id                UUID NOT NULL REFERENCES courts(id),
+    user_id                 UUID NOT NULL REFERENCES auth.users(id),
+    booking_date            DATE NOT NULL,
+    start_time_utc          TIMESTAMPTZ NOT NULL,
+    end_time_utc            TIMESTAMPTZ NOT NULL,
+    duration_minutes        INTEGER NOT NULL,
+    estimated_amount        NUMERIC(10,2),
+    promo_code_id           UUID REFERENCES promo_codes(id),
+    stripe_session_id       TEXT,                        -- Set when Stripe session is created
+    idempotency_key         TEXT NOT NULL UNIQUE,        -- Client-generated UUID to prevent duplicates
+    expires_at              TIMESTAMPTZ NOT NULL,        -- NOW() + hold_expiry_minutes
+    is_converted            BOOLEAN NOT NULL DEFAULT FALSE, -- TRUE once booking is confirmed
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Prevent overlapping holds for same court
+    -- Enforced via application layer + partial index below
+    CONSTRAINT hold_future_expiry CHECK (expires_at > created_at)
+);
+
+-- Partial index: only one active, unexpired, unconverted hold per court per time window
+-- Full EXCLUDE handled in application layer (Postgres EXCLUDE on GIST requires btree_gist + tstzrange)
+CREATE INDEX idx_booking_holds_active ON booking_holds (court_id, start_time_utc, end_time_utc)
+    WHERE is_converted = FALSE AND expires_at > NOW();
+
+-- ============================================================
+-- TABLE 11: BOOKINGS
+-- Confirmed (or in-progress) bookings
+-- ============================================================
+
+CREATE TABLE bookings (
+    id                          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id                 UUID NOT NULL REFERENCES facilities(id),
+    court_id                    UUID NOT NULL REFERENCES courts(id),
+    user_id                     UUID NOT NULL REFERENCES auth.users(id),
+    hold_id                     UUID REFERENCES booking_holds(id),   -- Source hold
+
+    -- Time (UTC, timezone-safe)
+    booking_date                DATE NOT NULL,           -- Local date (for display/query grouping)
+    start_time_utc              TIMESTAMPTZ NOT NULL,
+    end_time_utc                TIMESTAMPTZ NOT NULL,
+    duration_minutes            INTEGER NOT NULL,
+
+    -- Type / Status
+    booking_type                booking_type NOT NULL DEFAULT 'standard',
+    status                      booking_status NOT NULL DEFAULT 'pending_payment',
+
+    -- Pricing
+    base_amount                 NUMERIC(10,2) NOT NULL,
+    discount_amount             NUMERIC(10,2) NOT NULL DEFAULT 0.00,
+    tax_amount                  NUMERIC(10,2) NOT NULL DEFAULT 0.00,
+    fee_amount                  NUMERIC(10,2) NOT NULL DEFAULT 0.00,
+    total_amount                NUMERIC(10,2) NOT NULL,
+    currency                    TEXT NOT NULL DEFAULT 'usd',
+    promo_code_id               UUID REFERENCES promo_codes(id),
+
+    -- Stripe references
+    stripe_checkout_session_id  TEXT UNIQUE,
+    stripe_payment_intent_id    TEXT,
+
+    -- Admin / metadata
+    notes                       TEXT,
+    admin_notes                 TEXT,
+    is_recurring                BOOLEAN NOT NULL DEFAULT FALSE,
+    waiver_accepted             BOOLEAN NOT NULL DEFAULT FALSE,
+    waiver_accepted_at          TIMESTAMPTZ,
+
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Booking period must be valid
+    CONSTRAINT valid_booking_window CHECK (end_time_utc > start_time_utc),
+    CONSTRAINT positive_amount CHECK (total_amount >= 0)
+);
+
+-- CRITICAL: Prevent overlapping bookings at the database level
+-- Uses btree_gist extension + tstzrange exclusion
+ALTER TABLE bookings ADD COLUMN booking_period TSTZRANGE
+    GENERATED ALWAYS AS (tstzrange(start_time_utc, end_time_utc, '[)')) STORED;
+
+ALTER TABLE bookings ADD EXCLUDE USING GIST (
+    court_id WITH =,
+    booking_period WITH &&
+) WHERE (status IN ('hold', 'confirmed', 'pending_payment'));
+
+-- Supporting indexes
+CREATE INDEX idx_bookings_facility_date ON bookings (facility_id, booking_date);
+CREATE INDEX idx_bookings_court_date ON bookings (court_id, booking_date);
+CREATE INDEX idx_bookings_user ON bookings (user_id);
+CREATE INDEX idx_bookings_status ON bookings (status);
+CREATE INDEX idx_bookings_stripe_session ON bookings (stripe_checkout_session_id);
+
+-- ============================================================
+-- TABLE 12: BOOKING STATUS HISTORY
+-- Immutable audit trail of every status transition
+-- ============================================================
+
+CREATE TABLE booking_status_history (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    booking_id      UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    facility_id     UUID NOT NULL REFERENCES facilities(id),
+    old_status      booking_status,
+    new_status      booking_status NOT NULL,
+    changed_by      UUID REFERENCES auth.users(id),
+    reason          TEXT,
+    metadata        JSONB,                          -- e.g., Stripe event data
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_status_history_booking ON booking_status_history (booking_id);
+
+-- ============================================================
+-- TABLE 13: PAYMENTS
+-- Stripe payment records linked to bookings
+-- ============================================================
+
+CREATE TABLE payments (
+    id                          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    booking_id                  UUID NOT NULL REFERENCES bookings(id),
+    facility_id                 UUID NOT NULL REFERENCES facilities(id),
+    user_id                     UUID NOT NULL REFERENCES auth.users(id),
+
+    -- Stripe identifiers
+    stripe_checkout_session_id  TEXT NOT NULL,
+    stripe_payment_intent_id    TEXT,
+    stripe_customer_id          TEXT,
+
+    -- Amounts (in cents stored as numeric for precision)
+    amount                      NUMERIC(10,2) NOT NULL,
+    currency                    TEXT NOT NULL DEFAULT 'usd',
+    refunded_amount             NUMERIC(10,2) NOT NULL DEFAULT 0.00,
+
+    -- Status
+    payment_status              payment_status NOT NULL DEFAULT 'pending',
+    refund_status               refund_status NOT NULL DEFAULT 'none',
+
+    -- Stripe event metadata
+    stripe_metadata             JSONB,
+
+    -- Idempotency
+    idempotency_key             TEXT NOT NULL UNIQUE,
+
+    paid_at                     TIMESTAMPTZ,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_payments_booking ON payments (booking_id);
+CREATE INDEX idx_payments_stripe_session ON payments (stripe_checkout_session_id);
+
+-- ============================================================
+-- TABLE 14: BLACKOUT PERIODS
+-- Admin-created blocks (tournaments, maintenance, private events)
+-- These block ALL courts or specific courts for a time range
+-- ============================================================
+
+CREATE TABLE blackout_periods (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id     UUID NOT NULL REFERENCES facilities(id),
+    court_id        UUID REFERENCES courts(id),     -- NULL = all courts in facility
+    name            TEXT NOT NULL,
+    reason          TEXT,
+    start_time_utc  TIMESTAMPTZ NOT NULL,
+    end_time_utc    TIMESTAMPTZ NOT NULL,
+    blocks_period   TSTZRANGE GENERATED ALWAYS AS (tstzrange(start_time_utc, end_time_utc, '[)')) STORED,
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by      UUID REFERENCES auth.users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT valid_blackout CHECK (end_time_utc > start_time_utc)
+);
+
+CREATE INDEX idx_blackout_facility_time ON blackout_periods (facility_id, start_time_utc, end_time_utc)
+    WHERE is_active = TRUE;
+
+-- ============================================================
+-- TABLE 15: WAITLIST REQUESTS
+-- Users requesting a slot when none are available
+-- ============================================================
+
+CREATE TABLE waitlist_requests (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id     UUID NOT NULL REFERENCES facilities(id),
+    court_id        UUID REFERENCES courts(id),     -- NULL = any court
+    user_id         UUID NOT NULL REFERENCES auth.users(id),
+    requested_date  DATE NOT NULL,
+    requested_start TIME NOT NULL,                  -- Local time
+    requested_end   TIME NOT NULL,                  -- Local time
+    sport_type      TEXT,
+    status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'notified', 'booked', 'expired', 'cancelled')),
+    notified_at     TIMESTAMPTZ,
+    expires_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_waitlist_facility_date ON waitlist_requests (facility_id, requested_date);
+
+-- ============================================================
+-- TABLE 16: EVENT INQUIRIES
+-- Full-day / special event requests requiring admin approval
+-- ============================================================
+
+CREATE TABLE event_inquiries (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id         UUID NOT NULL REFERENCES facilities(id),
+    user_id             UUID NOT NULL REFERENCES auth.users(id),
+    event_name          TEXT NOT NULL,
+    event_description   TEXT,
+    requested_date      DATE NOT NULL,
+    start_time          TIME,                       -- NULL = full day
+    end_time            TIME,
+    estimated_attendees INTEGER,
+    sport_type          TEXT,
+    contact_name        TEXT NOT NULL,
+    contact_email       TEXT NOT NULL,
+    contact_phone       TEXT,
+    status              inquiry_status NOT NULL DEFAULT 'pending',
+    admin_notes         TEXT,
+    reviewed_by         UUID REFERENCES auth.users(id),
+    reviewed_at         TIMESTAMPTZ,
+    booking_id          UUID REFERENCES bookings(id),   -- Set when approved and booking created
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- TABLE 17: CONFIGURATION AUDIT LOGS
+-- Immutable log of all admin configuration changes
+-- ============================================================
+
+CREATE TABLE configuration_audit_logs (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    facility_id     UUID REFERENCES facilities(id),
+    changed_by      UUID NOT NULL REFERENCES auth.users(id),
+    table_name      TEXT NOT NULL,                  -- e.g., 'facility_settings'
+    record_id       UUID,                           -- PK of changed record
+    operation       TEXT NOT NULL CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
+    old_values      JSONB,
+    new_values      JSONB,
+    ip_address      TEXT,
+    user_agent      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_facility ON configuration_audit_logs (facility_id, created_at DESC);
+CREATE INDEX idx_audit_user ON configuration_audit_logs (changed_by, created_at DESC);
+
+-- ============================================================
+-- TRIGGERS: auto-update updated_at
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_user_profiles_updated_at
+    BEFORE UPDATE ON user_profiles
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_facilities_updated_at
+    BEFORE UPDATE ON facilities
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_facility_settings_updated_at
+    BEFORE UPDATE ON facility_settings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_courts_updated_at
+    BEFORE UPDATE ON courts
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_bookings_updated_at
+    BEFORE UPDATE ON bookings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_payments_updated_at
+    BEFORE UPDATE ON payments
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================
+-- TRIGGER: Auto-log booking status changes
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION log_booking_status_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.status IS DISTINCT FROM NEW.status THEN
+        INSERT INTO booking_status_history (
+            booking_id, facility_id, old_status, new_status, changed_by
+        ) VALUES (
+            NEW.id, NEW.facility_id, OLD.status, NEW.status, auth.uid()
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER trg_booking_status_history
+    AFTER UPDATE ON bookings
+    FOR EACH ROW EXECUTE FUNCTION log_booking_status_change();

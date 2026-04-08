@@ -1,0 +1,22 @@
+Layer	File	Purpose
+Entry	app.py	Navigation router, session init, global CSS
+Config	.streamlit/config.toml	Theme + server settings
+Secrets	.streamlit/secrets.toml.example	Template for Streamlit Cloud
+Env	.env.example	All required environment variables
+Deps	requirements.txt	All Python dependencies
+Utils	utils/config.py	Env var loading with fail-fast validation
+Utils	utils/constants.py	All magic strings, enums, session keys
+Utils	utils/validators.py	Email, password, phone, booking validation
+Utils	utils/time_utils.py	DST-aware UTC↔local conversion, slot generation
+DB	db/supabase_client.py	Anon + admin client factory (with security notes)
+DB	db/queries.py	All common DB queries (thin wrappers)
+Service	services/auth_service.py	Full auth + profile service with error handling
+Component	components/auth_guard.py	require_auth, require_admin, require_waiver, sidebar
+CSS	styles/custom.css	Full design system (cards, buttons, slots, admin)
+Page	pages/home.py	Landing page with live facility data
+Page	pages/login.py	3-tab: sign in / create account / reset password
+Page	pages/profile.py	Edit profile, password reset, waiver acceptance
+Stubs	pages/availability.py	Phase 3 placeholder
+Stubs	pages/my_bookings.py	Phase 5 placeholder
+Stubs	pages/payment_success.py	Phase 4 placeholder
+Admin stubs	pages/admin/*.py	Phase 6 placeholders

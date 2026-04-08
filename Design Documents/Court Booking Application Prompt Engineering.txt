@@ -1,0 +1,757 @@
+
+You are an expert full-stack engineer, product manager, security architect, and UX designer.
+
+Do NOT generate code yet.
+
+First, design the system architecture, user flows, data model, SQL schema, and Supabase RLS policies.
+
+==================================================
+PRODUCT OVERVIEW
+==================================================
+
+Build a production-quality MVP web application that is mobile-friendly for a Sports (Pickel Ball, Badminton, tennis, Kafrate etc) court booking platform.
+
+TECH STACK
+- Frontend: Streamlit (multi-page)
+- Backend/DB/Auth: Supabase (Postgres + Auth)
+- Payments: Stripe Checkout
+- Language: Python
+- Hosting: Streamlit Community Cloud (free tier)
+- Timezone: America/New_York (default, configurable later)
+
+==================================================
+CORE DESIGN PRINCIPLE (CRITICAL)
+==================================================
+
+The system MUST be configuration-driven and support multiple facilities.
+
+DO NOT hardcode:
+- operating hours
+- number of courts
+- slot durations
+
+Instead:
+- seed default values in DB
+- allow admin to fully configure via UI
+
+==================================================
+GOAL
+==================================================
+
+Users can:
+- Sign up / log in
+- Browse availability
+- Book courts
+- Pay via Stripe
+- Manage bookings
+
+Admins can:
+- Configure facilities
+- Manage courts, pricing, schedules
+- Monitor utilization and revenue
+
+==================================================
+FACILITY CONFIGURATION MODEL (ADMIN ONLY)
+==================================================
+
+Each facility must support:
+
+1. Facility Setup
+- facility_id
+- facility_name
+- timezone
+- is_active
+
+2. Operating Hours (per day of week)
+- open_time
+- close_time
+
+3. Closures
+- specific dates
+- recurring closures (e.g., Sundays 8–10 AM)
+
+4. Booking Rules
+- min_booking_minutes
+- booking_increment_minutes
+- max_booking_hours
+- buffer_minutes_between_bookings
+
+5. Advanced Rules
+- booking_window_days
+- cancellation_window_hours
+- refund_policy_type
+- full_day_event_requires_approval
+- allow_waitlist
+- allow_auto_assign_court
+
+6. Court Configuration
+- number_of_courts
+- Type of Court: named courts (e.g.badminton etc)
+- court_status (active / inactive / maintenance)
+
+7. Pricing Config
+- peak hours
+- off-peak hours
+- weekend pricing
+- event pricing
+
+8. Audit Logging
+- track all configuration changes
+
+==================================================
+BOOKING ENGINE (CRITICAL)
+==================================================
+
+Booking availability must be dynamically generated using:
+- facility configuration
+- operating hours
+- booking increment
+- minimum duration
+- closures
+- existing bookings
+
+Default booking presets (1–4 hours) are OPTIONAL UI shortcuts.
+Actual logic must be config-driven.
+
+==================================================
+MULTI-FACILITY DATA MODEL REQUIREMENT
+==================================================
+
+All operational tables MUST include facility_id:
+
+- courts
+- bookings
+- pricing_rules
+- blackout_periods
+- waitlist_requests
+- event_inquiries
+- payments
+
+==================================================
+PAYMENT + BOOKING SAFETY (CRITICAL)
+==================================================
+
+- Create booking HOLD before payment (expires in 5–10 min)
+- Use Stripe Checkout
+- Pass booking_id in metadata
+- On success redirect → VERIFY Stripe session server-side
+- Only THEN confirm booking
+- Prevent duplicate confirmations
+- Use idempotency keys
+
+==================================================
+USER ROLES
+==================================================
+
+1. Player
+2. Facility Admin (only assigned facilities)
+3. Platform Super Admin (all facilities)
+
+==================================================
+DATABASE TABLES (MINIMUM)
+==================================================
+
+- facilities
+- facility_operating_hours
+- facility_settings
+- facility_closures
+- courts
+- bookings
+- booking_status_history
+- pricing_rules
+- payments
+- promo_codes
+- waitlist_requests
+- event_inquiries
+- configuration_audit_logs
+- booking_holds
+- user_profiles
+- facility_admins
+
+==================================================
+SECURITY REQUIREMENTS
+==================================================
+
+- Use environment variables
+- Implement Supabase RLS
+- Enforce facility-level access control
+- Validate all inputs
+- Protect admin routes
+- Verify Stripe payments before booking confirmation
+
+==================================================
+STREAMLIT CONSTRAINTS
+==================================================
+
+- Use multipage architecture
+- Use session_state carefully
+- Separate UI and business logic
+- Avoid blocking calls
+
+==================================================
+DEPLOYMENT REQUIREMENTS
+==================================================
+
+Provide:
+- requirements.txt
+- .env.example
+- README
+- setup instructions for Supabase + Stripe
+- Streamlit deployment steps
+
+==================================================
+IMPORTANT ENGINEERING REQUIREMENTS
+==================================================
+
+1. Prevent booking conflicts at BOTH:
+   - application layer
+   - database level
+
+2. Handle timezone properly (DST aware)
+
+3. Explain all tradeoffs (especially Stripe + Streamlit limitations)
+
+
+CORE FEATURES TO IMPLEMENT
+
+========================
+CONFIGURATION MODULE (ADMIN ONLY)
+========================
+
+Create a dedicated Admin Configuration screen.
+
+Admin should be able to:
+
+1. Facility Setup
+- facility_id
+- facility_name
+- timezone
+- is_active
+
+2. Operating Hours (per day)
+- day_of_week
+- open_time
+- close_time
+
+3. Closures
+- date
+- reason
+
+4. Booking Rules
+- min_booking_minutes
+- booking_increment_minutes
+- max_booking_hours
+- buffer_minutes
+
+5. Court Configuration
+- number_of_courts
+- optional: court names
+
+6. Pricing Config
+- peak_hours
+- off_peak_hours
+- weekend pricing
+- event pricing
+
+7. Audit Logging
+- track all configuration changes
+
+8. Advanced Facility Rules
+- booking_window_days
+- cancellation_window_hours
+- refund_policy_type
+- full_day_event_requires_approval
+- allow_waitlist
+- allow_auto_assign_court
+- recurrence support for regular closures / blackout windows
+
+========================
+DATABASE TABLES (ADD/UPDATE)
+========================
+
+Include:
+
+- facilities
+- facility_operating_hours
+- facility_settings
+- facility_closures
+- courts (linked to facility)
+- facility_admins
+- configuration_audit_logs
+- booking_holds (for payment safety)
+
+all operational tables must be scoped by facility_id where appropriate:
+
+courts
+bookings
+pricing_rules
+blackout_periods / closures
+waitlist_requests
+event_inquiries
+payments where relevant
+
+========================
+BOOKING ENGINE (UPDATED)
+========================
+
+Booking availability MUST be dynamically generated based on:
+- facility operating hours
+- booking increment
+- minimum duration
+- closures
+- existing bookings
+
+========================
+PAYMENT + BOOKING SAFETY
+========================
+
+- Create booking HOLD before payment (expires in 5–10 mins)
+- Use Stripe Checkout
+- Pass booking_id in metadata
+- On return → verify Stripe session server-side
+- Only THEN confirm booking
+
+A. AUTHENTICATION
+- Use Supabase Auth
+- Support:
+  - Email/password sign-up
+  - Login
+  - Logout
+  - Password reset flow
+- Secure session management
+- Role-based access control for admin vs player
+- Store profile details in user_profiles table
+- Suggested profile fields:
+  - user_id
+  - full_name
+  - email
+  - phone
+  - membership_type
+  - waiver_accepted
+  - created_at
+  - role
+
+B. BOOKING EXPERIENCE
+- Calendar/date picker
+- Select date
+- Select duration: 1, 2, 3, 4 hours or full day
+- Show available start times dynamically based on:
+  - court availability
+  - opening hours
+  - selected duration
+  - blackout rules
+  - buffer rules if enabled
+- Show price before payment
+- Show policy summary before confirmation
+- Require waiver / terms agreement before checkout if not already accepted
+- After successful payment:
+  - Create confirmed booking
+  - Show confirmation page
+  - Save payment reference
+- If payment fails:
+  - Booking should not be confirmed
+  - Handle pending state cleanly
+
+C. PAYMENT INTEGRATION
+- Use Stripe Checkout or Stripe Payment Links / hosted checkout pattern
+- Build robust flow for:
+  - Reservation intent created first
+  - Payment session created
+  - Booking only marked confirmed after successful Stripe callback/webhook verification
+- Include support for:
+  - full / partial refund data model
+  - promo code placeholder
+  - taxes / fees placeholder if needed
+- Securely store Stripe customer id / payment intent / checkout session id references
+- Never store sensitive card details directly
+
+D. ADMIN CAPABILITIES
+- Admin panel within Streamlit
+- View bookings by day/week/month
+- Block courts or dates for maintenance / tournament / private event
+- Configure pricing:
+  - base price
+  - off-peak price
+  - peak price
+  - weekend price
+  - event full-day price
+- Add / edit / deactivate courts
+- View simple revenue and utilization metrics
+- Search bookings by user, date, status
+- Manual mark-for-review / override tools where appropriate
+
+E. PRICING ENGINE
+Design pricing in a flexible way.
+Suggested example:
+- Weekday off-peak = lower price
+- Weekday peak = higher price
+- Weekend = premium
+- Full-day event = flat event rate
+- Membership discounts if applicable
+Do not hardcode everything; make pricing rule-driven where feasible.
+Include a clear pricing service/module.
+
+F. DATA MODEL
+
+All multi-entity operational tables should include facility_id where appropriate to support proper tenant/facility scoping and admin permissions.
+
+Design a normalized Supabase/Postgres schema.
+At minimum include tables such as:
+1. user_profiles
+2. courts
+3. bookings
+4. booking_status_history
+5. pricing_rules
+6. blackout_periods
+7. payments
+8. promo_codes (optional basic table)
+9. waitlist_requests
+10. event_inquiries (optional)
+11. audit_logs (optional lightweight version)
+
+For bookings table, suggested fields:
+- id
+- user_id
+- court_id
+- booking_date
+- start_time
+- end_time
+- duration_hours
+- booking_type (standard/full_day/event)
+- status (pending_payment, confirmed, cancelled, refunded, blocked)
+- total_amount
+- currency
+- stripe_checkout_session_id
+- stripe_payment_intent_id
+- created_at
+- updated_at
+- notes
+
+Ensure the schema supports:
+- overlapping booking prevention
+- multiple courts
+- future expansion
+
+G. BOOKING CONFLICT LOGIC
+Implement reliable logic to prevent conflicting reservations.
+Overlapping check concept:
+A requested slot conflicts if:
+requested_start < existing_end
+AND requested_end > existing_start
+for the same court and active booking states.
+Also consider full-day bookings as blocking all bookable hours.
+Design this carefully and explain your approach in comments.
+
+H. UX / UI REQUIREMENTS
+Make the UI clean and polished despite Streamlit constraints.
+Include:
+- Home page with business overview and CTA
+- Availability search page
+- Booking flow page
+- My bookings page
+- Login / profile page
+- Admin dashboard page
+- Clear navigation in sidebar or top tabs
+- Friendly empty states
+- Good validation messages
+- Responsive layout as much as possible
+- Nice booking confirmation and error pages/messages
+- Modern branding placeholder with facility name/logo config
+- Use custom CSS sparingly but effectively for polish
+
+I. STREAMLIT APP ARCHITECTURE
+Create a modular project structure such as:
+
+/app
+  app.py
+  /pages
+    home.py
+    availability.py
+    book.py
+    my_bookings.py
+    profile.py
+    admin.py
+  /components
+    navbar.py
+    booking_card.py
+    pricing_summary.py
+    slot_selector.py
+  /services
+    auth_service.py
+    booking_service.py
+    pricing_service.py
+    payment_service.py
+    admin_service.py
+    availability_service.py
+  /db
+    supabase_client.py
+    queries.py
+    migrations.sql
+    seed.sql
+  /utils
+    time_utils.py
+    validators.py
+    constants.py
+    config.py
+  /styles
+    custom.css
+  requirements.txt
+  .env.example
+  README.md
+
+You may adjust the structure if a better one exists, but keep it organized and easy to follow.
+
+J. SECURITY REQUIREMENTS
+- Use environment variables for all secrets
+- Never hardcode API keys
+- Include .env.example
+- Use Supabase Row Level Security (RLS) policies where appropriate
+- Ensure users can only see/manage their own bookings unless admin
+- Validate all inputs server-side in code
+- Verify Stripe payment completion before confirming booking
+- Handle authentication states safely
+- Add basic rate-limiting ideas in comments if implementation is not trivial in Streamlit
+- Protect admin routes by role
+- Ensure proper timezone handling to avoid booking logic bugs
+
+K. SUPABASE REQUIREMENTS
+Generate:
+1. SQL schema / migrations
+2. RLS policies
+3. Seed data
+4. Example admin user instructions
+5. Helper notes for setting up Supabase tables and auth
+The SQL should be reasonably clean and executable.
+
+L. STRIPE REQUIREMENTS
+- Use hosted Stripe Checkout for simplicity and better UX/security
+- Include webhook verification pattern if feasible in deployed architecture
+- If Streamlit hosting makes webhook handling awkward, propose and implement the cleanest practical MVP workaround and explain tradeoffs
+- Document clearly how the Stripe flow works end to end
+
+M. DEPLOYMENT REQUIREMENTS
+Provide:
+- requirements.txt
+- README with setup instructions
+- Local development steps
+- Streamlit deployment steps
+- Supabase environment setup steps
+- Stripe environment setup steps
+- Notes on limitations of free-tier hosting
+- Suggestions for production hardening later
+
+N. PRODUCT DECISIONS TO MAKE INTELLIGENTLY
+Where details are ambiguous, make strong and reasonable product decisions. For example:
+- Whether to allow bookings only up to X days in advance
+- Minimum cancellation window
+- Refund rules
+- Peak hour definitions
+- Event booking inquiry process
+- Whether full-day event booking requires admin approval or direct purchase
+Document these decisions clearly in the README and code comments.
+
+Suggested sensible defaults:
+- Standard bookings allowed up to 30 days in advance
+- Full-day events require request + admin confirmation, OR allow direct booking at premium rate if simpler
+- Cancellation allowed up to 24 hours in advance for full refund
+- 50% refund within 12–24 hours
+- No refund inside 12 hours unless admin override
+- Peak hours:
+  - Weekdays: 5 PM to 10 PM
+  - Weekends: 8 AM to 8 PM
+You may refine these if needed.
+
+O. DEVELOPMENT APPROACH
+Build the project in phases and show outputs clearly:
+
+PHASE 1
+- Finalize architecture
+- Define assumptions
+- Design data model
+- Produce SQL schema and RLS
+
+PHASE 2
+- Build authentication and profile management
+
+PHASE 3
+- Build availability and booking engine
+
+PHASE 4
+- Build Stripe payment integration
+
+PHASE 5
+- Build my bookings and cancellation/reschedule flow
+
+PHASE 6
+- Build admin dashboard and pricing controls
+
+PHASE 7
+- Polish UI/UX
+
+PHASE 8
+- Create README, setup guide, and deployment guide
+
+P. EXPECTED OUTPUT FORMAT
+Work systematically and produce:
+1. High-level architecture summary
+2. Product assumptions and business rules
+3. Database schema
+4. SQL migrations
+5. Streamlit app code
+6. Service-layer code
+7. Stripe integration code
+8. RLS policies
+9. Seed data
+10. requirements.txt
+11. .env.example
+12. README
+13. Deployment instructions
+14. Future enhancement recommendations
+
+Q. CODING REQUIREMENTS
+- Write complete code, not pseudo-code unless explicitly marked
+- Add comments where business logic is non-obvious
+- Prefer maintainability over cleverness
+- Keep functions small and testable
+- Use type hints where useful
+- Include basic error handling
+- Include utility functions for timezone-safe datetime operations
+- Make code as copy-paste runnable as reasonably possible
+
+R. MVP SUCCESS CRITERIA
+The MVP is successful if:
+- A user can sign up / log in
+- Browse available slots
+- Book a valid slot
+- Pay using Stripe
+- Receive a confirmed booking
+- See booking in “My Bookings”
+- Admin can manage bookings and pricing
+- Booking conflicts are prevented
+- The app is deployable on free-tier tools with clear instructions
+
+S. IMPORTANT IMPLEMENTATION NOTES
+- Use America/New_York timezone consistently
+- Handle DST correctly
+- Separate payment pending vs booking confirmed states
+- Do not confirm booking until payment is verified
+- Avoid race conditions as much as practical in free-tier architecture
+- Explain any unavoidable free-tier compromises
+- Make sure the app can later support multiple courts, lessons, leagues, and tournaments
+
+
+
+ADDITIONAL CRITICAL ENGINEERING REQUIREMENTS 
+
+1. PAYMENT + BOOKING INTEGRITY
+- Implement a booking "hold" mechanism before payment (e.g., 5–10 min expiration)
+- Use idempotency keys for booking creation
+- Booking should NOT be confirmed until Stripe payment is verified server-side
+- Handle duplicate payment callbacks safely
+- Ensure booking cannot be double-confirmed
+
+2. STRIPE FLOW (MANDATORY APPROACH)
+- Use Stripe Checkout (hosted)
+- Pass booking reference in metadata
+- Use success_url with session_id
+- On return, VERIFY payment via Stripe API before confirming booking
+- Do NOT rely only on client-side success redirect
+- If webhook is not feasible in Streamlit, clearly implement fallback verification strategy
+
+3. DATABASE SAFETY
+- Enforce booking conflict prevention at BOTH:
+  a) application layer
+  b) database logic (preferred where possible)
+- Use transactional logic or safe insert patterns to avoid race conditions
+
+4. STREAMLIT CONSTRAINTS
+- Avoid blocking operations
+- Use st.session_state carefully
+- Keep business logic separate from UI
+- Design navigation clearly (multi-page pattern)
+
+
+==================================================
+PROMPT 1: PLANNING / ARCHITECTURE
+==================================================
+
+Before generating code:
+
+1. List top 5 risks:
+   - booking conflicts
+   - Stripe integration
+   - Streamlit limitations
+
+2. Provide mitigations
+
+Then produce:
+
+1. Assumptions
+2. User journeys
+3. Feature list by role
+4. Architecture diagram (text)
+5. Database schema
+6. SQL migrations
+7. RLS policies
+8. Tradeoffs
+
+==================================================
+PROMPT 2: GENERATE CODEBASE
+==================================================
+
+Generate full codebase file-by-file.
+
+Requirements:
+- Modular Python structure
+- Streamlit multipage app
+- Supabase auth integration
+- Booking conflict checks
+- Stripe Checkout + verification
+- Admin dashboard
+- Include migrations.sql, seed.sql
+
+Output format:
+
+FILE: path/to/file.py
+```python
+# full file content
+
+---------------------------------------------
+
+PROMPT 3: DEBUG AND HARDEN
+
+Act as senior engineer.
+
+Identify:
+logic bugs
+security gaps
+race conditions
+Stripe issues
+Streamlit limitations
+Fix issues
+Output ONLY changed files
+
+
+
+-----------------------------
+
+PROMPT 4: UX + BUSINESS OPTIMIZATION
+
+Improve UX without changing architecture.
+
+Enhance:
+
+landing page
+slot search UX
+pricing clarity
+booking confirmation UX
+waitlist
+promo codes
+membership hooks
+admin dashboard (utilization/revenue)
+cancellation messaging
+event inquiry flow
+mobile layout
+CSS polish
+
+Return ONLY changed files.

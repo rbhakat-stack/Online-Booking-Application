@@ -1,0 +1,19 @@
+[server]
+# Streamlit Community Cloud ignores this — set in the Secrets UI instead
+headless = true
+port = 8501
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+# Base theme — our custom CSS in styles/custom.css overrides most of this
+primaryColor = "#4361ee"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8f9ff"
+textColor = "#1a1a2e"
+font = "sans serif"
+
+[runner]
+# Prevent "Watching for file changes" spam in production
+fastReruns = true

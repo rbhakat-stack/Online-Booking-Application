@@ -1,0 +1,32 @@
+# ============================================================
+# SportsPlex — Python Dependencies
+# ============================================================
+
+# Core framework
+streamlit>=1.36.0
+
+# Supabase client (Postgres + Auth)
+supabase>=2.3.0
+gotrue>=2.0.0           # Supabase auth client (transitive, pinned for stability)
+
+# Stripe payments
+stripe>=7.0.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Timezone handling (DST-aware)
+pytz>=2024.1
+# zoneinfo is built-in for Python 3.9+ — no install needed
+
+# Data manipulation (admin metrics, availability grid)
+pandas>=2.0.0
+
+# Charts (revenue/utilization dashboards)
+plotly>=5.18.0
+
+# Image handling (logo uploads, court images)
+Pillow>=10.0.0
+
+# HTTP requests (Stripe webhook verification, health checks)
+requests>=2.31.0

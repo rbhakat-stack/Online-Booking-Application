@@ -1,0 +1,105 @@
+-- ============================================================
+-- SEED: Default Facility
+-- ============================================================
+
+INSERT INTO facilities (id, name, slug, address, city, state, zip_code, timezone, is_active)
+VALUES (
+    'a1b2c3d4-0000-0000-0000-000000000001',
+    'SportsPlex NYC',
+    'sportsplex-nyc',
+    '123 Court Street',
+    'New York',
+    'NY',
+    '10001',
+    'America/New_York',
+    TRUE
+);
+
+-- ============================================================
+-- SEED: Default Facility Settings
+-- ============================================================
+
+INSERT INTO facility_settings (
+    facility_id,
+    min_booking_minutes,
+    booking_increment_minutes,
+    max_booking_hours,
+    buffer_minutes_between_bookings,
+    booking_window_days,
+    cancellation_window_hours,
+    partial_refund_window_hours,
+    refund_policy_type,
+    full_day_event_requires_approval,
+    allow_waitlist,
+    allow_auto_assign_court,
+    hold_expiry_minutes
+)
+VALUES (
+    'a1b2c3d4-0000-0000-0000-000000000001',
+    60,     -- min 1 hour booking
+    30,     -- 30-min increment
+    4,      -- max 4 hours standard
+    0,      -- no buffer
+    30,     -- book up to 30 days ahead
+    24,     -- full refund if cancelled > 24h ahead
+    12,     -- 50% refund if cancelled 12-24h ahead
+    'standard',
+    TRUE,
+    FALSE,
+    TRUE,
+    10      -- 10-min hold expiry
+);
+
+-- ============================================================
+-- SEED: Operating Hours (Mon–Fri 6AM–11PM, Sat–Sun 7AM–10PM)
+-- ============================================================
+
+INSERT INTO facility_operating_hours (facility_id, day_of_week, is_open, open_time, close_time)
+VALUES
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'monday',    TRUE, '06:00', '23:00'),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'tuesday',   TRUE, '06:00', '23:00'),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'wednesday', TRUE, '06:00', '23:00'),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'thursday',  TRUE, '06:00', '23:00'),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'friday',    TRUE, '06:00', '23:00'),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'saturday',  TRUE, '07:00', '22:00'),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'sunday',    TRUE, '07:00', '22:00');
+
+-- ============================================================
+-- SEED: Courts
+-- ============================================================
+
+INSERT INTO courts (facility_id, name, sport_type, indoor, status, display_order)
+VALUES
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'Pickleball Court 1', 'pickleball', TRUE,  'active', 1),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'Pickleball Court 2', 'pickleball', TRUE,  'active', 2),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'Badminton Court A',  'badminton',  TRUE,  'active', 3),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'Badminton Court B',  'badminton',  TRUE,  'active', 4),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'Tennis Court 1',     'tennis',     FALSE, 'active', 5),
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'Karate Studio',      'karate',     TRUE,  'active', 6);
+
+-- ============================================================
+-- SEED: Pricing Rules
+-- ============================================================
+
+INSERT INTO pricing_rules (facility_id, rule_type, name, applies_to_days, peak_start_time, peak_end_time, price_per_hour, price_full_day, priority, is_active)
+VALUES
+    -- Base rate (all days, all times, lowest priority)
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'base',     'Standard Rate',       NULL, NULL, NULL, 25.00, 180.00, 0, TRUE),
+
+    -- Weekday off-peak (Mon–Fri before 5 PM)
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'off_peak', 'Weekday Off-Peak',
+        ARRAY['monday','tuesday','wednesday','thursday','friday']::day_of_week[],
+        NULL, '17:00', 20.00, NULL, 10, TRUE),
+
+    -- Weekday peak (Mon–Fri 5 PM–10 PM)
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'peak',     'Weekday Peak',
+        ARRAY['monday','tuesday','wednesday','thursday','friday']::day_of_week[],
+        '17:00', '22:00', 35.00, NULL, 20, TRUE),
+
+    -- Weekend premium (Sat–Sun, all day)
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'weekend',  'Weekend Premium',
+        ARRAY['saturday','sunday']::day_of_week[],
+        NULL, NULL, 40.00, 280.00, 15, TRUE),
+
+    -- Full-day event rate
+    ('a1b2c3d4-0000-0000-0000-000000000001', 'event',    'Full Day Event',       NULL, NULL, NULL, 45.00, 350.00, 25, TRUE);

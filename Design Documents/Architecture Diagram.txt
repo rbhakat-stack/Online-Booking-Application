@@ -1,0 +1,51 @@
+┌─────────────────────────────────────────────────────────────────┐
+│                    STREAMLIT COMMUNITY CLOUD                     │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    app.py (entry point)                   │   │
+│  │                                                          │   │
+│  │  /pages/                    /services/                   │   │
+│  │  ├── home.py                ├── auth_service.py          │   │
+│  │  ├── availability.py        ├── booking_service.py       │   │
+│  │  ├── book.py                ├── availability_service.py  │   │
+│  │  ├── payment_success.py     ├── pricing_service.py       │   │
+│  │  ├── my_bookings.py         ├── payment_service.py       │   │
+│  │  ├── profile.py             └── admin_service.py         │   │
+│  │  └── admin/                                              │   │
+│  │      ├── dashboard.py       /db/                         │   │
+│  │      ├── config.py          ├── supabase_client.py       │   │
+│  │      ├── bookings.py        └── queries.py               │   │
+│  │      └── metrics.py                                      │   │
+│  │                             /utils/                      │   │
+│  │  /components/               ├── time_utils.py            │   │
+│  │  ├── navbar.py              ├── validators.py            │   │
+│  │  ├── booking_card.py        ├── constants.py             │   │
+│  │  ├── slot_selector.py       └── config.py                │   │
+│  │  └── pricing_summary.py                                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                         │                                        │
+└─────────────────────────┼────────────────────────────────────────┘
+                          │ HTTPS (supabase-py / stripe SDK)
+          ┌───────────────┼───────────────┐
+          │               │               │
+          ▼               ▼               ▼
+   ┌─────────────┐  ┌──────────┐  ┌────────────────┐
+   │  SUPABASE   │  │  STRIPE  │  │  SUPABASE AUTH │
+   │  (Postgres) │  │ Checkout │  │  (JWT tokens)  │
+   │             │  │  API     │  │                │
+   │  • RLS      │  │          │  │  • Email/pass  │
+   │  • Auth     │  │  Hosted  │  │  • JWT verify  │
+   │  • Storage  │  │  page    │  │  • Role claims │
+   └─────────────┘  └──────────┘  └────────────────┘
+
+PAYMENT FLOW:
+User → Book → [Create Hold in DB] → [Create Stripe Session]
+     → Redirect to Stripe Hosted Checkout
+     → User pays → Stripe redirects to /payment-success?session_id=XXX
+     → App calls stripe.checkout.Session.retrieve(session_id) server-side
+     → If payment_status == 'paid' → confirm booking in DB
+     → Else → show error, release hold
+
+WEBHOOK (POST-MVP):
+Stripe → [Separate FastAPI service on Railway/Render]
+       → Verify signature → Confirm booking in Supabase

@@ -1,0 +1,9 @@
+Concern	Tradeoff	Decision
+Stripe webhooks	Streamlit Community Cloud has no persistent server; webhooks can't be reliably received	Use server-side session verification on redirect. Document webhook handler as a post-MVP enhancement via Railway/Render
+Booking conflict	Application-layer check + DB EXCLUDE is belt-and-suspenders but adds complexity	Both layers enforced. DB constraint is the final safety net; app layer provides user-friendly errors
+Hold mechanism	Holds use a separate table. Expired holds require cleanup (no background process in Streamlit)	Lazy cleanup: expired holds are filtered out at query time via expires_at check; periodic cleanup via Supabase scheduled function (pg_cron if available)
+Timezone storage	Storing UTC everywhere vs. local time	UTC everywhere in DB; local time only in UI layer. Operating hours stored as local TIME (not UTC) since they represent human-defined schedules that should survive DST transitions
+RLS vs. service role	Some operations (payment confirmation, audit writes) need elevated permissions that RLS would block	Use Supabase service_role key (server-side only, via environment variable) for payment confirmation and audit writes; anon/user key for client operations
+Supabase free tier	500 MB DB limit; no pg_cron on free tier	Hold cleanup done lazily; schema is compact; indexes are targeted not broad
+Multi-facility vs. single-tenant	Full multi-tenancy adds complexity	facility_id FK on all tables + RLS enforces isolation without a separate schema-per-tenant approach
+Streamlit session	Auth state is per-tab, not cross-tab	Supabase JWT stored in st.session_state; user must log in again if they open a new tab. Acceptable for MVP

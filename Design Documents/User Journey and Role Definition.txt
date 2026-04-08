@@ -1,0 +1,81 @@
+
+Journey 1: New Player — First Booking
+
+Land on Home → Sign Up (email + password) → Verify email (Supabase)
+→ Complete Profile (name, phone, accept waiver)
+→ Browse Availability (select facility, date, duration)
+→ Select time slot → Select court (or auto-assign)
+→ View pricing summary + policy
+→ Click "Book & Pay" → Stripe Checkout (hosted)
+→ Enter card → Pay → Redirect to /payment-success?session_id=xxx
+→ App verifies Stripe session server-side → Booking confirmed
+→ Confirmation page shown → Booking visible in "My Bookings"
+
+
+Journey 2: Cancel Booking
+
+Log In → My Bookings → Select booking
+→ View cancellation policy (based on time remaining)
+→ Confirm cancellation → Stripe refund initiated (if eligible)
+→ Booking status → "cancelled" → Email placeholder triggered
+
+
+Journey 3: Facility Admin — Configure New Court
+
+Log In (admin role) → Admin Dashboard → Facility Config
+→ Select facility → Courts tab → Add Court
+→ Enter name, sport type, status → Save
+→ Audit log entry created automatically
+
+Journey 4: Facility Admin — Block Dates
+
+Admin Dashboard → Facility Config → Closures tab
+→ Add closure (date + optional time range + reason)
+→ Save → All slots in that range removed from availability
+→ Existing confirmed bookings flagged for admin review
+
+
+Journey 5: Super Admin — Monitor Revenue
+
+Log In → Admin Dashboard → All Facilities view
+→ Revenue metrics by facility / date range
+→ Utilization heatmap by court/time
+→ Export-ready data table
+
+
+Feature List by Role
+Player
+Sign up / log in / logout / password reset
+View/edit profile (name, phone, membership type)
+Accept waiver (one-time, tracked)
+Browse availability (by facility, date, duration)
+Book court (with optional court selection)
+Pay via Stripe Checkout
+View confirmed bookings
+Cancel booking (with refund policy display)
+View booking history
+Join waitlist (if enabled)
+
+Facility Admin
+All player features (for their own bookings)
+View all bookings for their facility
+Search/filter bookings (by user, date, status, court)
+Block courts (maintenance / private event)
+Add/edit/deactivate courts
+Configure operating hours per day
+Configure facility settings (rules, pricing, flags)
+Add/remove closures and blackout periods
+Set/edit pricing rules
+View revenue and utilization metrics
+Manually override booking status
+Approve/deny full-day event inquiries
+View configuration audit log
+
+
+Super Admin
+All facility admin features across all facilities
+Create / deactivate facilities
+Assign facility admins
+View platform-wide metrics
+Manage promo codes
+Override any booking or payment

@@ -1,0 +1,22 @@
+facilities
+    ├── facility_operating_hours  (1:7, one per day-of-week)
+    ├── facility_settings         (1:1)
+    ├── facility_closures         (1:many)
+    ├── courts                    (1:many)
+    │       └── bookings          (1:many)
+    │               ├── booking_status_history
+    │               ├── payments
+    │               └── booking_holds
+    ├── pricing_rules             (1:many)
+    ├── blackout_periods          (1:many)
+    ├── waitlist_requests         (1:many)
+    ├── event_inquiries           (1:many)
+    └── facility_admins           (1:many)
+
+user_profiles (1:1 with auth.users)
+    ├── bookings
+    ├── waitlist_requests
+    └── event_inquiries
+
+promo_codes (platform-level)
+configuration_audit_logs (platform-level, facility-scoped entries)
