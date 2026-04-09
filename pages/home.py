@@ -64,11 +64,19 @@ def _render_hero(is_logged_in: bool):
             <div style="position:absolute;bottom:-80px;right:10%;width:350px;height:350px;
                         border-radius:50%;background:rgba(139,92,246,0.08);filter:blur(80px)"></div>
 
-            <div style="display:inline-block;background:rgba(14,165,233,0.15);
+            <div style="display:inline-flex;align-items:center;gap:0.55rem;
+                        background:rgba(14,165,233,0.15);
                         border:1px solid rgba(14,165,233,0.3);border-radius:999px;
                         padding:0.3rem 1rem;font-size:0.8rem;font-weight:600;
                         color:#38bdf8;letter-spacing:0.06em;margin-bottom:1.5rem">
-                🏓 SPORTS COURT BOOKING PLATFORM
+                <span style="
+                    width:22px;height:22px;border-radius:8px;
+                    display:inline-flex;align-items:center;justify-content:center;
+                    background:linear-gradient(135deg,#1e3a8a,#14b8a6);
+                    color:#ffffff;font-size:0.8rem;font-weight:800;
+                    box-shadow:0 6px 14px rgba(30,58,138,0.18);
+                ">C</span>
+                <span>SPORTS COURT BOOKING PLATFORM</span>
             </div>
 
             <h1 style="font-size:3rem;font-weight:900;line-height:1.1;margin:0 0 1rem;
@@ -374,13 +382,13 @@ def _render_footer():
                 box-shadow:0 8px 18px rgba(30,58,138,0.18);
             ">C</div>
             <div style="font-weight:700;color:#0f172a;margin-bottom:0.2rem">
-                {config.app_name}
+                Courtify
             </div>
             <div style="font-size:0.8rem;color:#94a3b8;margin-bottom:0.75rem">
                 Built with Streamlit &amp; Supabase · Payments by Stripe
             </div>
             <div style="font-size:0.78rem;color:#94a3b8">
-                © {current_year} {config.app_name} &nbsp;·&nbsp;
+                © {current_year} Courtify &nbsp;·&nbsp;
                 <a href="#" style="color:#0ea5e9;text-decoration:none">Privacy Policy</a>
                 &nbsp;·&nbsp;
                 <a href="#" style="color:#0ea5e9;text-decoration:none">Terms of Service</a>
