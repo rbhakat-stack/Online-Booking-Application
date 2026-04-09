@@ -89,6 +89,16 @@ def create_hold(
     """
     client = get_client(access_token, refresh_token)
 
+    # 0. Own-hold recovery — if THIS user already has an active hold for this
+    #    exact slot (from a previous session or a failed payment attempt), reuse
+    #    it instead of creating a duplicate.  This handles the common case where
+    #    the Streamlit session resets between Stripe redirect and return, giving
+    #    the user a fresh idempotency_key that bypasses step 1 below.
+    own_hold = _get_user_hold_for_slot(client, user_id, court_id, booking_date, start_time_utc)
+    if own_hold:
+        logger.info(f"Reusing existing hold {own_hold['id']} for user {user_id} on slot {start_time_utc}")
+        return own_hold
+
     # 1. Idempotency check — return existing hold if key matches
     existing = _get_hold_by_idempotency_key(client, idempotency_key)
     if existing:
@@ -96,12 +106,16 @@ def create_hold(
         return existing
 
     # 2. Application-level conflict check
+    #    Pass user_id so the check excludes this user's own (already handled
+    #    above) holds — belt-and-suspenders in case a concurrent request slips
+    #    through step 0.
     _check_slot_conflicts(
         client=client,
         court_id=court_id,
         booking_date=booking_date,
         start_time_utc=start_time_utc,
         end_time_utc=end_time_utc,
+        user_id=user_id,
     )
 
     # 3. Insert hold
@@ -171,12 +185,19 @@ def confirm_booking_from_hold(
     stripe_payment_intent_id: str,
     pricing_result: dict,
     notes: str = "",
+    bypass_expiry_check: bool = False,
 ) -> dict:
     """
     Convert a hold into a confirmed booking after Stripe payment verification.
 
     Called ONLY from payment_service.py AFTER server-side Stripe verification.
     Uses the admin client to bypass RLS (this is a trusted server-side operation).
+
+    Args:
+        bypass_expiry_check: When True (called post-payment), skip the hold
+            expiry guard. Stripe has already captured payment so we MUST confirm
+            the booking regardless of how long checkout took. The hold is
+            extended in-place so subsequent reads see a valid record.
 
     Steps:
     1. Fetch hold record
@@ -207,8 +228,12 @@ def confirm_booking_from_hold(
         raise BookingError("Hold already converted but no booking found.")
 
     # Guard: expired
+    # When bypass_expiry_check is True (post-Stripe-payment), we skip this
+    # check entirely — Stripe has already captured the payment, so we MUST
+    # create the booking.  We extend the hold's expires_at so the rest of
+    # the pipeline sees a live record.
     expires_dt = hold.get("expires_at")
-    if expires_dt:
+    if expires_dt and not bypass_expiry_check:
         from utils.time_utils import parse_iso_datetime
         exp = parse_iso_datetime(str(expires_dt))
         if exp and now_utc() > exp:
@@ -216,6 +241,21 @@ def confirm_booking_from_hold(
                 "Your payment session expired before we could confirm the booking. "
                 "The slot has been released. Please try booking again."
             )
+    elif expires_dt and bypass_expiry_check:
+        # Extend the hold so any downstream query sees it as active
+        from datetime import timedelta
+        extended = (now_utc() + timedelta(minutes=5)).isoformat()
+        try:
+            admin_client.table("booking_holds").update(
+                {"expires_at": extended}
+            ).eq("id", hold_id).execute()
+            logger.info(
+                f"Hold {hold_id} was expired but payment confirmed — "
+                "extended expires_at by 5 min to allow confirmation."
+            )
+        except Exception as ext_err:
+            # Non-fatal: log and continue — booking insert will still succeed
+            logger.warning(f"Could not extend hold {hold_id} expiry: {ext_err}")
 
     # Create booking record
     booking_data = {
@@ -421,16 +461,26 @@ def _check_slot_conflicts(
     booking_date: str,
     start_time_utc: datetime,
     end_time_utc: datetime,
+    user_id: Optional[str] = None,
 ) -> None:
     """
     Application-layer conflict check before inserting a hold.
     Raises BookingConflictError if a conflict is found.
+
+    Args:
+        user_id: When provided, holds belonging to THIS user are excluded from
+                 the hold conflict check.  The user's own hold is already handled
+                 by create_hold's step-0 recovery; this parameter is belt-and-
+                 suspenders for concurrent requests.
     """
     from db.queries import get_bookings_for_court_on_date, get_active_holds_for_court
     from utils.time_utils import parse_iso_datetime
 
-    # Check existing bookings
-    bookings = get_bookings_for_court_on_date(client, court_id, booking_date)
+    # Check existing confirmed/pending bookings
+    bookings = get_bookings_for_court_on_date(
+        client, court_id, booking_date,
+        conflict_statuses=["pending_payment", "confirmed"],
+    )
     for b in bookings:
         b_start = parse_iso_datetime(str(b.get("start_time_utc", "")))
         b_end = parse_iso_datetime(str(b.get("end_time_utc", "")))
@@ -440,8 +490,11 @@ def _check_slot_conflicts(
                     "This slot was just booked by someone else. Please choose a different time."
                 )
 
-    # Check active holds
-    holds = get_active_holds_for_court(client, court_id, booking_date)
+    # Check active holds from OTHER users (exclude own holds — already reused in step 0)
+    holds = get_active_holds_for_court(
+        client, court_id, booking_date,
+        exclude_user_id=user_id,   # never block the user with their own hold
+    )
     for h in holds:
         h_start = parse_iso_datetime(str(h.get("start_time_utc", "")))
         h_end = parse_iso_datetime(str(h.get("end_time_utc", "")))
@@ -467,6 +520,55 @@ def _get_hold_by_idempotency_key(client, idempotency_key: str) -> Optional[dict]
         )
         return response.data
     except Exception:
+        return None
+
+
+def _get_user_hold_for_slot(
+    client,
+    user_id: str,
+    court_id: str,
+    booking_date: str,
+    start_time_utc: datetime,
+) -> Optional[dict]:
+    """
+    Return the current user's own active, unconverted hold for this exact slot,
+    or None if no such hold exists.
+
+    This is the key to the "own-hold recovery" logic in create_hold.  When a
+    user's Streamlit session resets between the Stripe redirect and return
+    (clearing booking_idempotency_key from session_state), the retry produces a
+    brand-new idempotency key that bypasses the normal idempotency check.
+    Without this lookup the application would falsely report a conflict against
+    the user's own hold.
+
+    Slot identity is matched by court_id + booking_date + start_time_utc string
+    prefix (first 19 chars: "YYYY-MM-DDTHH:MM:SS") so minor sub-second or
+    timezone-formatting differences in the stored ISO string don't break the match.
+    """
+    try:
+        now_iso = now_utc().isoformat()
+        response = (
+            client.table("booking_holds")
+            .select("*")
+            .eq("court_id", court_id)
+            .eq("user_id", user_id)
+            .eq("booking_date", booking_date)
+            .eq("is_converted", False)
+            .gt("expires_at", now_iso)
+            .execute()
+        )
+        holds = response.data or []
+
+        # The target prefix is the first 19 characters of the ISO datetime,
+        # e.g. "2026-04-08T18:00:00" — avoids timezone/microsecond mismatches.
+        target_prefix = start_time_utc.isoformat()[:19]
+        for hold in holds:
+            stored = str(hold.get("start_time_utc", ""))
+            if stored[:19] == target_prefix:
+                return hold
+        return None
+    except Exception as exc:
+        logger.warning(f"_get_user_hold_for_slot lookup failed: {exc}")
         return None
 
 

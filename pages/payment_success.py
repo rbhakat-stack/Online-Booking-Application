@@ -145,26 +145,28 @@ def _render_booking_confirmed(booking: dict, already_confirmed: bool = False):
     # ── Header ────────────────────────────────────────────────
     col1, col2, col3 = st.columns([1, 4, 1])
     with col2:
-        st.markdown(
+        confirmed_title = "Booking Confirmed!" if not already_confirmed else "Already Confirmed!"
+        confirmed_sub   = (
+            "Your court is booked and payment has been received."
+            if not already_confirmed
+            else "This booking was already confirmed — you are all set!"
+        )
+        st.html(
             f"""
             <div style="text-align:center;padding:2rem 0 1rem">
-                <div style="font-size:4rem">✅</div>
+                <div style="font-size:4rem">&#9989;</div>
                 <h2 style="color:#065f46;font-weight:800;margin:0.5rem 0">
-                    {'Booking Confirmed!' if not already_confirmed else 'Already Confirmed!'}
+                    {confirmed_title}
                 </h2>
-                <p style="color:#6b7280">
-                    {'Your court is booked and payment has been received.' if not already_confirmed
-                     else 'This booking was already confirmed — you are all set!'}
-                </p>
+                <p style="color:#6b7280">{confirmed_sub}</p>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
     # ── Booking Details Card ──────────────────────────────────
     col1, col2, col3 = st.columns([1, 3, 1])
     with col2:
-        st.markdown(
+        st.html(
             f"""
             <div style="
                 background:linear-gradient(135deg,#f0fdf4,#dcfce7);
@@ -191,7 +193,7 @@ def _render_booking_confirmed(booking: dict, already_confirmed: bool = False):
                         <div style="color:#9ca3af;font-size:0.78rem;font-weight:600;
                                     text-transform:uppercase;letter-spacing:0.05em">Time</div>
                         <div style="font-weight:700;color:#1a1a2e;margin-top:0.2rem">
-                            {time_str} – {end_str}
+                            {time_str} &ndash; {end_str}
                         </div>
                     </div>
                     <div>
@@ -205,7 +207,7 @@ def _render_booking_confirmed(booking: dict, already_confirmed: bool = False):
                         <div style="color:#9ca3af;font-size:0.78rem;font-weight:600;
                                     text-transform:uppercase;letter-spacing:0.05em">Total Paid</div>
                         <div style="font-weight:700;color:#4361ee;margin-top:0.2rem">
-                            ${total:.2f}
+                            &#36;{total:.2f}
                         </div>
                     </div>
                 </div>
@@ -213,14 +215,13 @@ def _render_booking_confirmed(booking: dict, already_confirmed: bool = False):
                 <div style="background:white;border-radius:8px;padding:0.75rem;
                             border:1px solid #e5e7eb;font-size:0.8rem;color:#6b7280">
                     <strong>Booking Reference:</strong>
-                    <span style="font-family:monospace;color:#1a1a2e"> #{booking_id_short}</span>
+                    <span style="font-family:monospace;color:#1a1a2e"> &#35;{booking_id_short}</span>
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.html("<div style='height:0.75rem'></div>")
 
         # ── CTA Buttons ───────────────────────────────────────
         col_a, col_b = st.columns(2)
@@ -255,16 +256,15 @@ def _render_payment_failed(error: str, session_id: str):
     """Shown when payment verification fails or payment is not completed."""
     col1, col2, col3 = st.columns([1, 4, 1])
     with col2:
-        st.markdown(
+        st.html(
             """
             <div style="text-align:center;padding:2rem 0 1rem">
-                <div style="font-size:4rem">❌</div>
+                <div style="font-size:4rem">&#10060;</div>
                 <h2 style="color:#991b1b;font-weight:800;margin:0.5rem 0">
                     Payment Not Confirmed
                 </h2>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
         st.error(error)
@@ -278,10 +278,9 @@ def _render_payment_failed(error: str, session_id: str):
             """
         )
 
-        st.markdown(
+        st.html(
             f"<div style='font-size:0.8rem;color:#9ca3af;margin-top:0.5rem'>"
-            f"Session reference: <code>{session_id[:20]}…</code></div>",
-            unsafe_allow_html=True,
+            f"Session reference: <code>{session_id[:20]}&hellip;</code></div>"
         )
 
         st.markdown("---")

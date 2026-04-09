@@ -144,12 +144,22 @@ def get_facility_availability(
         court_bookings = bookings_by_court.get(court_id, [])
         court_holds = holds_by_court.get(court_id, [])
 
+        now = now_utc()   # Computed once per court to keep comparisons consistent
+
         slots: list[SlotInfo] = []
         for start, end in all_slots:
             slot_start_utc = combine_date_time_utc(requested_date, start, timezone)
             slot_end_utc = combine_date_time_utc(requested_date, end, timezone)
 
-            if full_day_blackout:
+            # ── Past-slot guard ──────────────────────────────────
+            # Slots whose start time has already passed are immediately
+            # marked unavailable and grayed out in the UI.  We use a strict
+            # less-than so a slot starting exactly now is still blocked
+            # (the user would not have time to complete the booking flow).
+            if slot_start_utc <= now:
+                available = False
+                reason = "Slot is in the past"
+            elif full_day_blackout:
                 available = False
                 reason = full_day_blackout
             else:

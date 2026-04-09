@@ -57,9 +57,9 @@ def render_pricing_summary(
 
     total_line = (
         f"<div style='display:flex;justify-content:space-between;"
-        f"border-top:2px solid #4361ee;margin-top:0.75rem;padding-top:0.75rem'>"
-        f"<span style='font-weight:700;font-size:1rem;color:#1a1a2e'>Total Due Today</span>"
-        f"<span style='font-weight:800;font-size:1.2rem;color:#4361ee'>${total:.2f}</span>"
+        f"border-top:2px solid #0ea5e9;margin-top:0.75rem;padding-top:0.75rem'>"
+        f"<span style='font-weight:700;font-size:1rem;color:#0f172a'>Total Due Today</span>"
+        f"<span style='font-weight:800;font-size:1.2rem;color:#0ea5e9'>${total:.2f}</span>"
         f"</div>"
     )
 
@@ -100,7 +100,7 @@ def render_compact_price(total_amount: float, rule_name: str = "") -> None:
     """Compact price chip used in availability slot grids."""
     rule_str = f" · {rule_name}" if rule_name else ""
     st.markdown(
-        f"<span style='background:#e8efff;color:#4361ee;border-radius:999px;"
+        f"<span style='background:#e0f2fe;color:#0ea5e9;border-radius:999px;"
         f"padding:0.15rem 0.6rem;font-size:0.82rem;font-weight:600'>"
         f"${total_amount:.2f}{rule_str}</span>",
         unsafe_allow_html=True,

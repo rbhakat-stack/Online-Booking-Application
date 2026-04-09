@@ -140,7 +140,7 @@ def get_bookings_for_court_on_date(
 
     response = (
         client.table("bookings")
-        .select("id, start_time_utc, end_time_utc, status, booking_type")
+        .select("id, court_id, start_time_utc, end_time_utc, status, booking_type")
         .eq("court_id", court_id)
         .eq("booking_date", date_str)
         .in_("status", conflict_statuses)
@@ -203,20 +203,31 @@ def get_active_holds_for_court(
     client: Client,
     court_id: str,
     date_str: str,
+    exclude_user_id: Optional[str] = None,
 ) -> list[dict]:
-    """Return non-expired, non-converted holds for a court on a date."""
+    """
+    Return non-expired, non-converted holds for a court on a date.
+
+    Args:
+        exclude_user_id: When provided, omit holds belonging to this user.
+                         Used in availability checks so a user's own active hold
+                         doesn't block them from re-selecting the same slot.
+    """
     from utils.time_utils import now_utc
     now_iso = now_utc().isoformat()
 
-    response = (
+    query = (
         client.table("booking_holds")
-        .select("id, start_time_utc, end_time_utc, expires_at")
+        .select("id, court_id, user_id, start_time_utc, end_time_utc, expires_at")
         .eq("court_id", court_id)
         .eq("booking_date", date_str)
         .eq("is_converted", False)
         .gt("expires_at", now_iso)
-        .execute()
     )
+    if exclude_user_id:
+        query = query.neq("user_id", exclude_user_id)
+
+    response = query.execute()
     return response.data or []
 
 

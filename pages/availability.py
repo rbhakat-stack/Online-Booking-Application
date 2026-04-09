@@ -29,7 +29,7 @@ from components.pricing_summary import render_compact_price
 from services.auth_service import get_auth_service
 from services.availability_service import get_facility_availability, get_combined_availability, pick_best_court
 from services.pricing_service import calculate_price, generate_duration_options
-from db.supabase_client import get_client, get_session_client
+from db.supabase_client import get_client, get_session_client, get_admin_client
 from db.queries import (
     get_active_facilities,
     get_active_courts,
@@ -83,14 +83,22 @@ def render():
             st.session_state[SessionKey.SELECTED_FACILITY_ID] = selected_fac_id
 
         with col2:
-            sport_options = ["Any"] + SPORT_TYPES
+            # Sport is always required — no "Any" or "multi-sport" options.
+            # Restore previously selected sport, defaulting to pickleball.
+            saved_sport = st.session_state.get("selected_sport_type", "pickleball")
+            default_sport_idx = (
+                SPORT_TYPES.index(saved_sport)
+                if saved_sport in SPORT_TYPES
+                else 0
+            )
             sport_filter = st.selectbox(
                 "🏅 Sport",
-                options=sport_options,
-                format_func=lambda s: f"{SPORT_ICONS.get(s, '')} {s.title()}" if s != "Any" else "🏟️ Any Sport",
+                options=SPORT_TYPES,
+                format_func=lambda s: f"{SPORT_ICONS.get(s, '')} {s.title()}",
+                index=default_sport_idx,
                 key="sport_filter",
             )
-            sport_filter = None if sport_filter == "Any" else sport_filter
+            st.session_state["selected_sport_type"] = sport_filter
 
         with col3:
             # Load facility settings to know the booking window
@@ -115,10 +123,13 @@ def render():
             st.session_state[SessionKey.SELECTED_DATE] = selected_date
 
         with col4:
+            # Cap increment at 30 min: slots appear at :00 and :30 each hour.
+            # This ensures a 7:30-8:30 booking leaves 8:30-9:30 open.
+            slot_increment = min(int(settings.get("booking_increment_minutes", 30)), 30)
             duration_opts = generate_duration_options(
                 min_booking_minutes=int(settings.get("min_booking_minutes", 60)),
                 max_booking_hours=int(settings.get("max_booking_hours", 4)),
-                booking_increment_minutes=int(settings.get("booking_increment_minutes", 30)),
+                booking_increment_minutes=slot_increment,
             )
             saved_duration = st.session_state.get(SessionKey.SELECTED_DURATION)
             dur_labels = [d["label"] for d in duration_opts]
@@ -139,6 +150,11 @@ def render():
     st.markdown("---")
 
     # ── Load Availability Data ───────────────────────────────
+    # Exclude the current user's own holds so their previous hold for a slot
+    # does not prevent them from re-selecting the same slot.
+    current_user = auth_service.get_current_user()
+    current_user_id = str(current_user.id) if current_user else None
+
     with st.spinner("Checking availability…"):
         try:
             availability_data = _load_availability(
@@ -149,6 +165,7 @@ def render():
                 settings=settings,
                 sport_type_filter=sport_filter,
                 timezone=next((f["timezone"] for f in facilities if f["id"] == selected_fac_id), "America/New_York"),
+                exclude_user_id=current_user_id,
             )
         except Exception as e:
             st.error(f"Failed to load availability: {e}")
@@ -163,22 +180,35 @@ def render():
     pricing_rules = availability_data["pricing_rules"]
     courts_map = availability_data["courts_map"]
 
-    # ── Date Header ──────────────────────────────────────────
+    # ── Date / Sport Header ───────────────────────────────────
+    sport_icon   = SPORT_ICONS.get(sport_filter, "🏟️")
+    sport_label  = sport_filter.title()
+    courts_count = len(courts_map)   # total courts of this sport type
+
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.markdown(f"### Available Slots — {format_date(selected_date)}")
+        st.markdown(
+            f"### {sport_icon} {sport_label} — {format_date(selected_date)}"
+        )
+        st.caption(
+            f"{courts_count} {sport_label} court{'s' if courts_count != 1 else ''} · "
+            "Each slot shows how many courts are free at that time"
+        )
     with col2:
-        total_avail = sum(s["available_courts"] for s in combined_slots if s["available"])
-        if total_avail:
-            st.success(f"✅ {len([s for s in combined_slots if s['available']])} time slots open")
+        open_slots = [s for s in combined_slots if s["available"]]
+        if open_slots:
+            st.success(f"✅ {len(open_slots)} time slots open")
         else:
             st.error("❌ No slots available")
 
-    # ── Slot Grid ────────────────────────────────────────────
+    # ── Slot Grid ─────────────────────────────────────────────
+    # 3 columns gives wider, more readable buttons and avoids the
+    # "4 columns = 4 sport types?" confusion.
     selected_start_utc = st.session_state.get("_avail_selected_start_utc")
     just_selected = render_combined_slot_grid(
         combined_slots=combined_slots,
         selected_start_utc=selected_start_utc,
+        columns_per_row=3,
     )
 
     if just_selected:
@@ -295,8 +325,9 @@ def _load_availability(
     selected_date: date,
     duration_minutes: int,
     settings: dict,
-    sport_type_filter: Optional[str],
+    sport_type_filter: str,          # Always required — no "Any" option
     timezone: str,
+    exclude_user_id: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Fetch all data needed for availability computation and run the engine.
@@ -321,29 +352,50 @@ def _load_availability(
     closures = get_facility_closures(client, facility_id)
     blackout_periods = get_blackout_periods_for_date(client, facility_id, date_str)
 
-    # Load existing bookings + holds for all courts on this date
+    # Load existing bookings + holds for all courts on this date.
+    # We use the admin client here so that Postgres RLS does not hide other
+    # users' bookings.  With the anon key, RLS restricts reads to the user's
+    # own rows — meaning other users' confirmed bookings are invisible and
+    # every slot falsely appears available (5/5 instead of 4/5).
+    # The admin client bypasses RLS; no user-controlled values are interpolated
+    # into these queries (only server-side court IDs and date strings).
+    avail_client = get_admin_client()
     all_bookings = []
     all_holds = []
     for court in courts:
         court_id = str(court["id"])
         all_bookings.extend(
             get_bookings_for_court_on_date(
-                client, court_id, date_str,
-                conflict_statuses=[BookingStatus.HOLD, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED],
+                avail_client, court_id, date_str,
+                conflict_statuses=[BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED],
             )
         )
-        all_holds.extend(get_active_holds_for_court(client, court_id, date_str))
+        all_holds.extend(
+            get_active_holds_for_court(
+                avail_client, court_id, date_str,
+                exclude_user_id=exclude_user_id,  # Don't block user's own slot
+            )
+        )
 
     # Load pricing rules
     pricing_rules = get_pricing_rules(client, facility_id)
 
-    # Run availability engine
+    # Run availability engine.
+    # Override booking_increment_minutes to at most 30 so time slots are
+    # generated at :00 and :30 each hour.  A booking at 7:30-8:30 then
+    # leaves 8:30-9:30 open (they don't overlap: 8:30 < 8:30 is false).
+    engine_settings = {
+        **settings,
+        "booking_increment_minutes": min(
+            int(settings.get("booking_increment_minutes", 30)), 30
+        ),
+    }
     court_availability = get_facility_availability(
         requested_date=selected_date,
         duration_minutes=duration_minutes,
         courts=courts,
         operating_hours_list=operating_hours,
-        facility_settings=settings,
+        facility_settings=engine_settings,
         existing_bookings=all_bookings,
         active_holds=all_holds,
         closures=closures,

@@ -134,6 +134,12 @@ class AuthService:
 
         except AuthApiError as e:
             raise AuthError(self._parse_auth_error(e))
+        except Exception as e:
+            logger.error(f"sign_up unexpected error: {e}", exc_info=True)
+            raise AuthError(
+                "Could not connect to the authentication service. "
+                "Please check your internet connection and try again."
+            )
 
     # ── Sign In ──────────────────────────────────────────────
 
@@ -184,6 +190,12 @@ class AuthService:
 
         except AuthApiError as e:
             raise AuthError(self._parse_auth_error(e))
+        except Exception as e:
+            logger.error(f"sign_in unexpected error: {e}", exc_info=True)
+            raise AuthError(
+                "Could not connect to the authentication service. "
+                "Please check your internet connection and try again."
+            )
 
     # ── Sign Out ─────────────────────────────────────────────
 

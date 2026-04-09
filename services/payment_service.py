@@ -49,7 +49,6 @@ Architecture & Design Decisions:
 
 import logging
 import stripe
-import stripe.error
 from typing import Optional
 
 from db.supabase_client import get_admin_client
@@ -57,6 +56,46 @@ from utils.config import get_config
 from utils.time_utils import format_date, format_time, format_duration
 
 logger = logging.getLogger(__name__)
+
+
+# ── SDK Compatibility Helper ──────────────────────────────────
+
+def _safe_meta(metadata, key: str, default: str = "") -> str:
+    """
+    Extract a single key from a Stripe session metadata object.
+
+    Works across ALL Stripe Python SDK versions (v4 and v5):
+
+    SDK v4: StripeObject inherits from dict → metadata[key] works via __getitem__.
+    SDK v5: StripeObject no longer inherits from dict, so:
+      - dict(metadata) silently returns {} (StripeObject.__iter__ does not yield keys)
+      - metadata.get("key") raises AttributeError("get") via __getattr__
+      - metadata["key"] works via __getitem__ which IS defined in all versions
+      - getattr(metadata, "key") works via __getattr__ as a field-lookup fallback
+
+    We never call .get() on the raw StripeObject.  We never call dict() on it.
+    We go key-by-key using __getitem__ then getattr as a fallback.
+    """
+    if not metadata:
+        return default
+    # Primary: __getitem__ — defined on StripeObject in all SDK versions
+    try:
+        val = metadata[key]
+        if val is not None:
+            return str(val)
+        return default
+    except (KeyError, IndexError):
+        pass   # Key not present — fall through to attribute access
+    except Exception:
+        pass   # Unexpected error — try next strategy
+    # Fallback: attribute-style access (v5 __getattr__ delegates to inner dict)
+    try:
+        val = getattr(metadata, key, None)
+        if val is not None:
+            return str(val)
+    except Exception:
+        pass
+    return default
 
 
 # ── Client Setup ─────────────────────────────────────────────
@@ -155,8 +194,11 @@ def create_checkout_session(
     # Streamlit reads session_id from st.query_params on the payment-success page.
     success_url = f"{app_url}/payment-success?session_id={{CHECKOUT_SESSION_ID}}"
 
-    # cancel_url: User cancelled on Stripe → send back to home
-    cancel_url = f"{app_url}/"
+    # cancel_url: User cancelled on Stripe → return to book page so we can
+    # release the hold immediately.  The hold_id is passed as a query param so
+    # book.py can expire it without relying on session_state (which may be
+    # lost after the Stripe redirect).
+    cancel_url = f"{app_url}/book?stripe_cancelled=1&hold_id={hold['id']}"
 
     # Metadata passed through Stripe — we read these back in payment_success.py
     metadata = {
@@ -186,13 +228,13 @@ def create_checkout_session(
                 "description": product_description,
             },
         )
-    except stripe.error.AuthenticationError:
+    except stripe.AuthenticationError:
         logger.error("Stripe authentication failed — check STRIPE_SECRET_KEY")
         raise PaymentError("Payment system configuration error. Please contact support.")
-    except stripe.error.InvalidRequestError as e:
+    except stripe.InvalidRequestError as e:
         logger.error(f"Stripe invalid request: {e}")
         raise PaymentError(f"Payment request error: {e.user_message or str(e)}")
-    except stripe.error.StripeError as e:
+    except stripe.StripeError as e:
         logger.error(f"Stripe API error creating session: {e}")
         raise PaymentError("Payment service temporarily unavailable. Please try again.")
 
@@ -248,30 +290,44 @@ def verify_payment_session(session_id: str) -> dict:
             session_id,
             expand=["payment_intent"],
         )
-    except stripe.error.InvalidRequestError:
+    except stripe.InvalidRequestError:
         return {"paid": False, "error": "Payment session not found."}
-    except stripe.error.StripeError as e:
+    except stripe.StripeError as e:
         logger.error(f"Stripe API error verifying session {session_id}: {e}")
         return {"paid": False, "error": "Payment verification temporarily unavailable."}
 
-    metadata = session.metadata or {}
+    # Read metadata key-by-key using _safe_meta so we never call .get() or
+    # dict() on the raw StripeObject — both of those break in Stripe SDK v5
+    # (dict() silently returns {}, .get() raises AttributeError("get")).
+    raw_meta = session.metadata
+
     paid = session.payment_status == "paid"
 
     # Extract payment_intent_id safely (may be expanded object or string)
     pi = session.payment_intent
     payment_intent_id = pi.id if hasattr(pi, "id") else (pi if isinstance(pi, str) else None)
 
+    hold_id     = _safe_meta(raw_meta, "hold_id")     or None
+    user_id     = _safe_meta(raw_meta, "user_id")     or None
+    facility_id = _safe_meta(raw_meta, "facility_id") or None
+    notes       = _safe_meta(raw_meta, "notes", "")
+
+    logger.debug(
+        f"verify_payment_session: session={session.id} paid={paid} "
+        f"hold_id={hold_id!r} user_id={user_id!r}"
+    )
+
     return {
         "paid":                 paid,
         "session_id":           session.id,
         "payment_status":       session.payment_status,
         "payment_intent_id":    payment_intent_id,
-        "hold_id":              metadata.get("hold_id"),
-        "user_id":              metadata.get("user_id"),
-        "facility_id":          metadata.get("facility_id"),
+        "hold_id":              hold_id,
+        "user_id":              user_id,
+        "facility_id":          facility_id,
         "amount_total_dollars": (session.amount_total or 0) / 100.0,
         "customer_email":       session.customer_email,
-        "notes":                metadata.get("notes", ""),
+        "notes":                notes,
         "error":                None,
     }
 
@@ -382,6 +438,10 @@ def process_successful_payment(
             stripe_payment_intent_id=verification.get("payment_intent_id") or "",
             pricing_result=price_info,
             notes=verification.get("notes", ""),
+            # Payment is already captured by Stripe — bypass the hold expiry
+            # guard so a slow checkout or session-loss recovery never blocks
+            # an otherwise valid booking confirmation.
+            bypass_expiry_check=True,
         )
 
         logger.info(
@@ -467,10 +527,10 @@ def issue_refund(
             "amount_dollars": (refund.amount or 0) / 100.0,
             "error": None,
         }
-    except stripe.error.InvalidRequestError as e:
+    except stripe.InvalidRequestError as e:
         logger.error(f"Stripe refund invalid request: {e}")
         return {"success": False, "refund_id": None, "amount_dollars": 0, "error": str(e)}
-    except stripe.error.StripeError as e:
+    except stripe.StripeError as e:
         logger.error(f"Stripe refund failed: {e}")
         return {
             "success": False,

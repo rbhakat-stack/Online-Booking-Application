@@ -30,7 +30,7 @@ from services.booking_service import (
     generate_idempotency_key,
 )
 from services.pricing_service import calculate_price
-from db.supabase_client import get_client, get_session_client
+from db.supabase_client import get_client, get_session_client, get_admin_client
 from db.queries import (
     get_bookings_for_court_on_date,
     get_active_holds_for_court,
@@ -51,6 +51,13 @@ from utils.validators import validate_notes, validate_promo_code, sanitize_text
 def render():
     auth_service = get_auth_service()
     show_auth_status_sidebar()
+
+    # ── Stripe cancel redirect handler ────────────────────────
+    # When the user clicks "Back" on Stripe's checkout page, Stripe redirects
+    # to /book?stripe_cancelled=1&hold_id=<uuid>.  We immediately expire the
+    # hold so the slot is released for other users (and for this user's retry).
+    _handle_stripe_cancel()
+
     require_auth("Please log in to complete your booking.")
     require_waiver()    # Ensure waiver accepted before booking
 
@@ -142,6 +149,7 @@ def render():
         auth_service=auth_service,
         facility_id=facility_id,
         court_id=court_id,
+        court=court,
         start_utc=start_utc,
         booking_date=booking_date,
         duration_minutes=duration_minutes,
@@ -329,6 +337,7 @@ def _render_payment_section(
     auth_service,
     facility_id: str,
     court_id: str,
+    court: Optional[dict],
     start_utc,
     booking_date: date,
     duration_minutes: int,
@@ -351,6 +360,12 @@ def _render_payment_section(
     else:
         promo_discount = 0
         total_after_promo = total
+
+    # Build a promo-adjusted copy of price_info so Stripe shows the right total
+    adjusted_price_info = dict(price_info) if price_info else {}
+    adjusted_price_info["total_amount"] = total_after_promo
+    if applied_promo:
+        adjusted_price_info["discount_amount"] = promo_discount
 
     # Terms checkbox
     agreed = st.checkbox(
@@ -385,10 +400,12 @@ def _render_payment_section(
             auth_service=auth_service,
             facility_id=facility_id,
             court_id=court_id,
+            court=court,
             start_utc=start_utc,
             booking_date=booking_date,
             duration_minutes=duration_minutes,
             estimated_amount=total_after_promo,
+            price_info=adjusted_price_info,
             notes=sanitize_text(notes),
             promo_id=applied_promo.get("id") if applied_promo else None,
         )
@@ -398,10 +415,12 @@ def _do_create_hold(
     auth_service,
     facility_id: str,
     court_id: str,
+    court: Optional[dict],
     start_utc,
     booking_date: date,
     duration_minutes: int,
     estimated_amount: float,
+    price_info: Optional[dict],
     notes: str,
     promo_id: Optional[str],
 ):
@@ -444,8 +463,10 @@ def _do_create_hold(
             )
 
             # Store hold in session state
+            # Note: booking_notes is already persisted automatically by the
+            # st.text_area widget (key="booking_notes") — do NOT write it here
+            # or Streamlit raises "cannot be modified after widget is instantiated".
             st.session_state["active_hold"] = hold
-            st.session_state["booking_notes"] = notes
 
             st.success(f"✅ Slot reserved — {hold_expiry} minutes to complete payment!")
 
@@ -569,6 +590,68 @@ def _create_stripe_session_and_redirect(
 
 # ── Utility Helpers ───────────────────────────────────────────
 
+def _handle_stripe_cancel() -> None:
+    """
+    Called at the top of render() before any other logic.
+
+    When the user clicks "Back" on Stripe's checkout page, Stripe redirects to
+    /book?stripe_cancelled=1&hold_id=<uuid>.  This function:
+      1. Detects that cancel redirect via query params
+      2. Expires the booking hold immediately so the slot is freed
+      3. Clears booking session state
+      4. Redirects the user to availability so they can choose a different slot
+         (or re-select the same one — the hold is now gone)
+
+    Without this, the hold would linger for up to 10 minutes, blocking the user
+    from re-booking the same slot (they would see "held by another user").
+    """
+    params = st.query_params
+    if params.get("stripe_cancelled") != "1":
+        return
+
+    hold_id = params.get("hold_id", "")
+
+    # Expire the hold
+    if hold_id:
+        try:
+            from services.booking_service import release_hold
+            access_token = st.session_state.get("access_token", "")
+            refresh_token = st.session_state.get("refresh_token", "")
+            user = st.session_state.get("user")
+            if user and access_token:
+                release_hold(
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    hold_id=hold_id,
+                    user_id=str(user.id),
+                )
+            elif hold_id:
+                # Fallback: use admin client to expire the hold even if
+                # the user's session tokens are unavailable after redirect
+                from db.supabase_client import get_admin_client
+                from utils.time_utils import now_utc
+                get_admin_client().table("booking_holds").update({
+                    "expires_at": now_utc().isoformat(),
+                }).eq("id", hold_id).execute()
+        except Exception as exc:
+            # Non-critical — hold will expire on its own within 10 minutes
+            import logging
+            logging.getLogger(__name__).warning(f"Could not release hold {hold_id} on cancel: {exc}")
+
+    # Clear booking session state
+    for key in ["active_hold", "booking_idempotency_key", "stripe_checkout_url",
+                SessionKey.STRIPE_SESSION_ID]:
+        st.session_state.pop(key, None)
+
+    # Clear query params then redirect to availability
+    st.query_params.clear()
+    st.info("Payment cancelled — your slot hold has been released. Choose a slot to try again.")
+    if st.button("← Choose a Slot", type="primary"):
+        _clear_booking_session()
+        st.switch_page("pages/availability.py")
+    st.stop()
+
+
 def _get_active_hold() -> Optional[dict]:
     hold = st.session_state.get("active_hold")
     if hold and not is_hold_expired(str(hold.get("expires_at", ""))):
@@ -581,24 +664,60 @@ def _check_slot_still_available(
     booking_date: str,
     start_utc,
 ) -> bool:
-    """Quick check that the slot hasn't been taken since the user selected it."""
+    """
+    Quick check that the slot hasn't been taken since the user selected it.
+    Checks both confirmed bookings AND active holds from other users.
+    The current user's own hold is excluded so they can re-enter the booking
+    page after a failed payment attempt without being falsely blocked.
+    """
     try:
-        client = get_client()
-        bookings = get_bookings_for_court_on_date(
-            client, court_id, booking_date,
-            conflict_statuses=[BookingStatus.HOLD, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED],
-        )
         from datetime import timedelta
+        from utils.time_utils import parse_iso_datetime
+
+        # Use admin client so RLS does not hide other users' bookings/holds.
+        # With the anon key, Postgres RLS restricts reads to the caller's own
+        # rows — every slot would appear free and the real conflict would only
+        # surface (too late) inside create_hold, giving a confusing error.
+        client = get_admin_client()
         duration = st.session_state.get(SessionKey.SELECTED_DURATION, 60)
         end_utc = start_utc + timedelta(minutes=duration)
 
-        from utils.time_utils import parse_iso_datetime
+        # Reject slots that have already started (same guard as the availability engine)
+        from utils.time_utils import now_utc
+        if start_utc <= now_utc():
+            return False
+
+        # Current user's ID — their own hold should not block them
+        current_user_id = ""
+        user = st.session_state.get("user")
+        if user:
+            try:
+                current_user_id = str(user.id)
+            except Exception:
+                pass
+
+        # Check confirmed bookings (the only statuses that truly occupy a slot)
+        bookings = get_bookings_for_court_on_date(
+            client, court_id, booking_date,
+            conflict_statuses=[BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED],
+        )
         for b in bookings:
             b_start = parse_iso_datetime(str(b.get("start_time_utc", "")))
             b_end = parse_iso_datetime(str(b.get("end_time_utc", "")))
-            if b_start and b_end:
-                if start_utc < b_end and end_utc > b_start:
-                    return False
+            if b_start and b_end and start_utc < b_end and end_utc > b_start:
+                return False
+
+        # Also check active holds from OTHER users
+        holds = get_active_holds_for_court(
+            client, court_id, booking_date,
+            exclude_user_id=current_user_id,
+        )
+        for h in holds:
+            h_start = parse_iso_datetime(str(h.get("start_time_utc", "")))
+            h_end = parse_iso_datetime(str(h.get("end_time_utc", "")))
+            if h_start and h_end and start_utc < h_end and end_utc > h_start:
+                return False
+
         return True
     except Exception:
         return True  # Optimistic — let DB constraint catch real conflicts

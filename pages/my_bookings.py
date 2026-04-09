@@ -60,6 +60,11 @@ def render():
 
     st.markdown("## 📋 My Bookings")
 
+    # ── Pending payment recovery ──────────────────────────────
+    # If the user paid via Stripe but the session was lost before
+    # payment_success.py could confirm the booking, we recover here.
+    _recover_pending_payment(user_id)
+
     # ── Post-cancellation banner (shown once then cleared) ────
     _show_cancellation_result_banner()
 
@@ -82,6 +87,51 @@ def render():
 
     with tab_past:
         _render_past_tab(user_id, access_token, refresh_token)
+
+
+# ── Pending Payment Recovery ─────────────────────────────────
+
+def _recover_pending_payment(user_id: str) -> None:
+    """
+    If a Stripe session ID is stored in session_state but the booking was never
+    confirmed (e.g., because the Streamlit session was lost during the Stripe
+    redirect and the user logged in fresh), attempt to confirm it now.
+
+    This is a safety net — payment_success.py is the primary path.
+    """
+    from utils.constants import SessionKey
+    session_id = st.session_state.get(SessionKey.STRIPE_SESSION_ID, "")
+    if not session_id or not str(session_id).startswith("cs_"):
+        return
+
+    with st.spinner("Confirming your recent payment…"):
+        try:
+            from services.payment_service import process_successful_payment, PaymentVerificationError
+            result = process_successful_payment(
+                stripe_session_id=str(session_id),
+                current_user_id=user_id,
+                price_info=st.session_state.get("_booking_price_info"),
+            )
+            if result["success"] and not result.get("already_confirmed"):
+                st.success(
+                    "✅ **Booking confirmed!** Your payment was processed and your booking "
+                    "is now active. It will appear in the list below."
+                )
+            elif result["success"]:
+                pass  # Already confirmed — silently proceed
+            else:
+                st.warning(
+                    f"Could not auto-confirm payment: {result.get('error', '')} "
+                    "If you were charged, please contact support."
+                )
+        except Exception as e:
+            st.warning(
+                f"Could not verify a pending payment ({e}). "
+                "If you were recently charged, please visit the payment confirmation "
+                "link in your Stripe receipt email or contact support."
+            )
+    # Always clear the pending session_id after one attempt
+    st.session_state.pop(SessionKey.STRIPE_SESSION_ID, None)
 
 
 # ── Tab Content ───────────────────────────────────────────────

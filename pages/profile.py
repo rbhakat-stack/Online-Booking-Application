@@ -36,11 +36,72 @@ def render():
         st.error("Could not load your profile. Please log out and sign in again.")
         return
 
-    # ── Waiver Banner ────────────────────────────────────────
-    if not profile.get("waiver_accepted"):
+    # ── Profile Header Card ───────────────────────────────────
+    name      = profile.get("full_name", "User")
+    initials  = "".join(w[0].upper() for w in name.split()[:2])
+    role      = profile.get("role", "player")
+    membership = profile.get("membership_type", "none")
+    waiver_ok  = profile.get("waiver_accepted", False)
+
+    _role_colors = {
+        "player": ("#e0f2fe", "#0ea5e9"),
+        "facility_admin": ("#ede9fe", "#8b5cf6"),
+        "super_admin": ("#fee2e2", "#ef4444"),
+    }
+    _membership_colors = {
+        "none": ("#f1f5f9", "#64748b"),
+        "basic": ("#d1fae5", "#10b981"),
+        "premium": ("#dbeafe", "#0ea5e9"),
+        "corporate": ("#fef3c7", "#f59e0b"),
+    }
+    role_bg, role_clr = _role_colors.get(role, ("#f1f5f9", "#64748b"))
+    mem_bg, mem_clr   = _membership_colors.get(membership, ("#f1f5f9", "#64748b"))
+
+    waiver_badge = (
+        "<span style='background:#d1fae5;color:#065f46;border-radius:999px;"
+        "padding:0.2rem 0.7rem;font-size:0.72rem;font-weight:700'>Waiver Signed</span>"
+        if waiver_ok else
+        "<span style='background:#fee2e2;color:#991b1b;border-radius:999px;"
+        "padding:0.2rem 0.7rem;font-size:0.72rem;font-weight:700'>Waiver Required</span>"
+    )
+    user_email = user.email if user else ""
+    role_label = role.replace("_", " ").title()
+    mem_label  = membership.title()
+
+    st.html(
+        f"""
+        <div style="background:linear-gradient(135deg,#0f172a,#1e293b);
+                    border-radius:20px;padding:2rem;
+                    border:1px solid rgba(14,165,233,0.15);
+                    display:flex;align-items:center;gap:1.5rem;margin-bottom:1rem;">
+            <div style="width:72px;height:72px;border-radius:50%;flex-shrink:0;
+                        background:linear-gradient(135deg,#0ea5e9,#8b5cf6);
+                        display:flex;align-items:center;justify-content:center;
+                        font-size:1.6rem;font-weight:800;color:#fff;
+                        box-shadow:0 4px 20px rgba(14,165,233,0.4);">{initials}</div>
+            <div style="flex:1">
+                <div style="font-size:1.3rem;font-weight:800;color:#f1f5f9">{name}</div>
+                <div style="font-size:0.85rem;color:#94a3b8;margin-top:0.2rem">{user_email}</div>
+                <div style="display:flex;gap:0.5rem;margin-top:0.65rem;flex-wrap:wrap">
+                    <span style="background:{role_bg};color:{role_clr};border-radius:999px;
+                                 padding:0.2rem 0.7rem;font-size:0.72rem;font-weight:700">
+                        {role_label}
+                    </span>
+                    <span style="background:{mem_bg};color:{mem_clr};border-radius:999px;
+                                 padding:0.2rem 0.7rem;font-size:0.72rem;font-weight:700">
+                        {mem_label} Member
+                    </span>
+                    {waiver_badge}
+                </div>
+            </div>
+        </div>
+        """
+    )
+
+    if not waiver_ok:
         st.warning(
-            "⚠️ **Action required:** You must accept our Terms & Liability Waiver "
-            "before making your first booking. See the **Terms & Waiver** tab below.",
+            "⚠️ **Action required:** Accept the Terms & Liability Waiver "
+            "in the **Terms & Waiver** tab before making your first booking.",
         )
 
     st.markdown("## 👤 My Profile")

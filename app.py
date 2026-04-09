@@ -177,20 +177,22 @@ admin_metrics_page = st.Page(
 # payment_success is always included (Stripe redirects there regardless of nav state).
 
 def _build_nav():
-    # Always-present pages (reachable via URL / session flow but hidden from sidebar nav)
-    always_hidden = [book_page, payment_page]
-
+    # book_page and payment_page are flow-only pages: they must be registered in
+    # st.navigation so st.switch_page can reach them, but we hide them from the
+    # sidebar visually via CSS (.sp-hidden-nav class rule in custom.css).
     if not _is_logged_in:
         # Unauthenticated: home + login only
         nav_pages = {
             "": [home_page],
             "Account": [login_page],
+            # Flow pages must be registered even when logged out (Stripe redirect)
+            "  ": [book_page, payment_page],
         }
     elif _is_admin:
         # Admin: full set including admin section
         nav_pages = {
             "": [home_page],
-            "Booking": [availability_page, my_bookings_page],
+            "Booking": [availability_page, my_bookings_page, book_page, payment_page],
             "Account": [profile_page],
             "Admin": [
                 admin_dashboard_page,
@@ -203,18 +205,14 @@ def _build_nav():
         # Regular player
         nav_pages = {
             "": [home_page],
-            "Booking": [availability_page, my_bookings_page],
+            "Booking": [availability_page, my_bookings_page, book_page, payment_page],
             "Account": [profile_page],
         }
 
-    # Flatten all visible pages + hidden pages into the navigation call
-    # Hidden pages (like payment_success) are reachable by direct URL but not in sidebar
-    all_pages = [page for group in nav_pages.values() for page in group] + always_hidden
-
-    return nav_pages, all_pages
+    return nav_pages
 
 
-_nav_pages, _all_pages = _build_nav()
+_nav_pages = _build_nav()
 
 # Build sidebar navigation with section headers
 pg = st.navigation(_nav_pages)
@@ -224,12 +222,20 @@ with st.sidebar:
     st.markdown(
         """
         <div style="padding:1rem 0 0.5rem;text-align:center">
-            <span style="font-size:2rem">🏓</span>
-            <div style="font-weight:800;font-size:1.2rem;color:#ffffff;letter-spacing:0.02em">
+            <div style="
+                display:inline-flex;align-items:center;justify-content:center;
+                width:48px;height:48px;border-radius:14px;
+                background:linear-gradient(135deg,#0ea5e9,#8b5cf6);
+                font-size:1.5rem;margin-bottom:0.5rem;
+                box-shadow:0 4px 14px rgba(14,165,233,0.4);
+            ">🏓</div>
+            <div style="font-weight:800;font-size:1.15rem;color:#f1f5f9;
+                        letter-spacing:0.02em;margin-top:0.25rem">
                 SportsPlex
             </div>
-            <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);margin-top:0.1rem">
-                Court Booking Platform
+            <div style="font-size:0.72rem;color:rgba(255,255,255,0.4);
+                        margin-top:0.1rem;letter-spacing:0.05em;text-transform:uppercase">
+                Court Booking
             </div>
         </div>
         """,

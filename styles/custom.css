@@ -34,6 +34,15 @@ html, body, [class*="css"] {
     color: #ffffff;
 }
 
+/* Hide flow-only pages (Complete Booking, Payment) from the sidebar nav.
+   These pages must be registered in st.navigation for st.switch_page to work,
+   but they are never meant to be clicked directly — the booking flow navigates
+   to them programmatically. Target by URL path (href ends with /book or /payment-success). */
+[data-testid="stSidebarNav"] li:has(a[href$="/book"]),
+[data-testid="stSidebarNav"] li:has(a[href$="/payment-success"]) {
+    display: none !important;
+}
+
 [data-testid="stSidebar"] .stButton > button {
     background: transparent;
     color: #ffffff;

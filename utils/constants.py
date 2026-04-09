@@ -19,15 +19,13 @@ SPORT_TYPES: Final = [
     "badminton",
     "tennis",
     "karate",
-    "multi-sport",
 ]
 
 SPORT_ICONS: Final = {
     "pickleball": "🏓",
-    "badminton": "🏸",
-    "tennis": "🎾",
-    "karate": "🥋",
-    "multi-sport": "🏅",
+    "badminton":  "🏸",
+    "tennis":     "🎾",
+    "karate":     "🥋",
 }
 
 # ── Days of Week ─────────────────────────────────────────────
