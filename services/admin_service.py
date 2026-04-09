@@ -187,26 +187,49 @@ def search_bookings(
     """
     admin = get_admin_client()
 
-    query = admin.table("bookings") \
-        .select("id, booking_date, start_time_utc, end_time_utc, duration_minutes, "
-                "status, total_amount, base_amount, discount_amount, notes, "
-                "admin_notes, stripe_payment_intent_id, created_at, user_id, "
-                "courts(name, sport_type, indoor)") \
-        .eq("facility_id", facility_id) \
-        .order("booking_date", desc=True) \
-        .order("start_time_utc", desc=True) \
-        .limit(limit) \
-        .offset(offset)
+    # Full column set — may include optional columns not in every deployment.
+    # Falls back to core-only columns if the production schema is missing them.
+    _FULL_COLS = (
+        "id, booking_date, start_time_utc, end_time_utc, duration_minutes, "
+        "status, total_amount, base_amount, discount_amount, notes, "
+        "admin_notes, stripe_payment_intent_id, created_at, user_id, "
+        "courts(name, sport_type, indoor)"
+    )
+    _CORE_COLS = (
+        "id, booking_date, start_time_utc, end_time_utc, duration_minutes, "
+        "status, total_amount, notes, stripe_payment_intent_id, created_at, user_id, "
+        "courts(name, sport_type, indoor)"
+    )
 
-    if date_from:
-        query = query.gte("booking_date", date_from)
-    if date_to:
-        query = query.lte("booking_date", date_to)
-    if status_filter:
-        query = query.in_("status", status_filter)
+    def _build_query(cols: str):
+        q = (
+            admin.table("bookings")
+            .select(cols)
+            .eq("facility_id", facility_id)
+            .order("booking_date", desc=True)
+            .order("start_time_utc", desc=True)
+            .limit(limit)
+            .offset(offset)
+        )
+        if date_from:
+            q = q.gte("booking_date", date_from)
+        if date_to:
+            q = q.lte("booking_date", date_to)
+        if status_filter:
+            q = q.in_("status", status_filter)
+        return q
 
-    resp = query.execute()
-    rows = resp.data or []
+    try:
+        resp = _build_query(_FULL_COLS).execute()
+        rows = resp.data or []
+    except Exception:
+        # Retry with core columns only (handles missing optional schema columns)
+        try:
+            resp = _build_query(_CORE_COLS).execute()
+            rows = resp.data or []
+        except Exception as e:
+            logger.error(f"search_bookings fallback query also failed: {e}")
+            rows = []
 
     if sport_type:
         rows = [r for r in rows if (r.get("courts") or {}).get("sport_type") == sport_type]

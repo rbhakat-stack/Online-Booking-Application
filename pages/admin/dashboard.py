@@ -20,7 +20,6 @@ from services.admin_service import (
     get_dashboard_stats,
     get_todays_bookings,
     get_recent_activity,
-    create_facility,
 )
 from db.supabase_client import get_admin_client
 from db.queries import get_admin_facilities, get_active_facilities
@@ -44,7 +43,13 @@ _SPORT_ICONS = {
 @st.dialog("➕ Add New Facility", width="large")
 def _add_facility_dialog():
     """Modal form for Super Admin to create a new facility."""
-    import pytz
+    # Lazy import — avoids crashing the dashboard page if admin_service
+    # is temporarily unavailable or hasn't deployed yet.
+    try:
+        from services.admin_service import create_facility as _create_facility
+    except ImportError:
+        st.error("Create Facility feature is not available yet. Please redeploy the app.")
+        return
 
     st.markdown(
         "<p style='color:#64748b;margin-bottom:1rem'>"
@@ -95,7 +100,7 @@ def _add_facility_dialog():
         }
 
         try:
-            new_fac = create_facility(payload)
+            new_fac = _create_facility(payload)
             st.success(f"✅ Facility **{new_fac['name']}** created successfully!")
             # Clear cached facility selection so the dropdown refreshes
             st.session_state.pop("_admin_facility_id", None)
