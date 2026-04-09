@@ -225,10 +225,11 @@ with st.sidebar:
             <div style="
                 display:inline-flex;align-items:center;justify-content:center;
                 width:48px;height:48px;border-radius:14px;
-                background:linear-gradient(135deg,#0ea5e9,#8b5cf6);
-                font-size:1.5rem;margin-bottom:0.5rem;
-                box-shadow:0 4px 14px rgba(14,165,233,0.4);
-            ">🏓</div>
+                background:linear-gradient(135deg,#1e3a8a,#14b8a6);
+                font-size:1.2rem;font-weight:800;color:#ffffff;
+                margin-bottom:0.5rem;
+                box-shadow:0 8px 18px rgba(30,58,138,0.22);
+            ">C</div>
             <div style="font-weight:800;font-size:1.15rem;color:#f1f5f9;
                         letter-spacing:0.02em;margin-top:0.25rem">
                 Courtify

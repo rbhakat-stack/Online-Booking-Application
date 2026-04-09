@@ -365,7 +365,14 @@ def _render_footer():
             border-top:1px solid #e2e8f0;
             margin-top:1rem;
         ">
-            <div style="font-size:1.3rem;margin-bottom:0.3rem">🏓</div>
+            <div style="
+                width:42px;height:42px;border-radius:14px;
+                display:inline-flex;align-items:center;justify-content:center;
+                background:linear-gradient(135deg,#1e3a8a,#14b8a6);
+                color:#ffffff;font-size:1.05rem;font-weight:800;
+                margin:0 auto 0.55rem;
+                box-shadow:0 8px 18px rgba(30,58,138,0.18);
+            ">C</div>
             <div style="font-weight:700;color:#0f172a;margin-bottom:0.2rem">
                 {config.app_name}
             </div>

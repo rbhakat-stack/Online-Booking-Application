@@ -24,65 +24,61 @@ def render():
         _render_signed_in_state()
         return
 
-    brand_col, auth_col = st.columns([1.15, 0.95], gap="large")
-    with brand_col:
+    outer_left, center_col, outer_right = st.columns([0.7, 1.2, 0.7], gap="large")
+    with center_col:
         _render_brand_panel()
-    with auth_col:
         _render_auth_panel(auth_service)
 
 
 def _inject_login_css():
-    """Scoped CSS for the split-screen Courtify auth layout."""
+    """Scoped CSS for a cleaner, centered Courtify auth layout."""
     st.markdown(
         """
         <style>
-        .courtify-shell {
-            min-height: calc(100vh - 8rem);
-            display: flex;
-            align-items: center;
-        }
         .courtify-brand {
             background:
-                radial-gradient(circle at top right, rgba(20, 184, 166, 0.18), transparent 34%),
-                radial-gradient(circle at bottom left, rgba(30, 58, 138, 0.14), transparent 32%),
-                linear-gradient(180deg, #f8fbff 0%, #f4f7fb 100%);
+                radial-gradient(circle at top center, rgba(20, 184, 166, 0.12), transparent 38%),
+                linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
             border: 1px solid rgba(30, 58, 138, 0.08);
             border-radius: 28px;
-            padding: 2.5rem;
-            box-shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
+            padding: 1.35rem 1.75rem 1.2rem;
+            box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
             position: relative;
             overflow: hidden;
+            text-align: center;
+            margin-bottom: 0.75rem;
         }
         .courtify-brand::after {
             content: "";
             position: absolute;
-            inset: auto -3rem -3rem auto;
-            width: 12rem;
-            height: 12rem;
+            inset: auto -1.25rem -1.25rem auto;
+            width: 6.75rem;
+            height: 6.75rem;
             border-radius: 50%;
             border: 1px solid rgba(20, 184, 166, 0.12);
             background: rgba(20, 184, 166, 0.05);
         }
         .courtify-logo {
-            display: inline-flex;
+            display: flex;
             align-items: center;
+            justify-content: center;
             gap: 0.75rem;
             font-weight: 800;
             color: #0f172a;
             letter-spacing: -0.02em;
-            margin-bottom: 1.5rem;
+            margin-bottom: 0.45rem;
         }
         .courtify-logo-mark {
-            width: 2.8rem;
-            height: 2.8rem;
-            border-radius: 0.95rem;
+            width: 2.55rem;
+            height: 2.55rem;
+            border-radius: 0.85rem;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             background: linear-gradient(135deg, #1e3a8a 0%, #14b8a6 100%);
             color: white;
-            font-size: 1.2rem;
-            box-shadow: 0 10px 24px rgba(30, 58, 138, 0.22);
+            font-size: 1.08rem;
+            box-shadow: 0 8px 18px rgba(30, 58, 138, 0.18);
         }
         .courtify-eyebrow {
             display: inline-flex;
@@ -101,80 +97,23 @@ def _inject_login_css():
         .courtify-brand h1 {
             margin: 0;
             color: #0f172a;
-            font-size: clamp(2rem, 4vw, 3.4rem);
-            line-height: 1.05;
+            font-size: clamp(2.1rem, 4vw, 3rem);
+            line-height: 1.08;
             letter-spacing: -0.04em;
         }
         .courtify-subheadline {
             color: #475569;
-            font-size: 1rem;
-            line-height: 1.7;
-            max-width: 40rem;
-            margin: 1rem 0 1.75rem;
-        }
-        .courtify-section {
-            margin-top: 1.35rem;
-            padding-top: 1.15rem;
-            border-top: 1px solid rgba(148, 163, 184, 0.18);
-        }
-        .courtify-section-title {
-            color: #0f172a;
-            font-size: 1rem;
-            font-weight: 700;
-            margin-bottom: 0.45rem;
-        }
-        .courtify-section-copy {
-            color: #475569;
-            font-size: 0.95rem;
-            line-height: 1.65;
+            font-size: 0.92rem;
+            line-height: 1.4;
+            max-width: none;
             margin: 0;
-        }
-        .courtify-feature-list {
-            display: grid;
-            gap: 0.85rem;
-            margin-top: 0.9rem;
-        }
-        .courtify-feature {
-            display: grid;
-            grid-template-columns: 2.3rem 1fr;
-            gap: 0.85rem;
-            align-items: start;
-        }
-        .courtify-feature-icon {
-            width: 2.3rem;
-            height: 2.3rem;
-            border-radius: 0.8rem;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            background: white;
-            border: 1px solid rgba(30, 58, 138, 0.08);
-            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
-            font-size: 1rem;
-        }
-        .courtify-feature strong {
-            display: block;
-            color: #0f172a;
-            font-size: 0.94rem;
-            margin-bottom: 0.15rem;
-        }
-        .courtify-feature span {
-            color: #475569;
-            font-size: 0.88rem;
-            line-height: 1.55;
-        }
-        .courtify-operator-note {
-            margin-top: 1.35rem;
-            padding: 1rem 1.1rem;
-            border-radius: 1rem;
-            background: linear-gradient(180deg, rgba(30, 58, 138, 0.04), rgba(20, 184, 166, 0.06));
-            border: 1px solid rgba(30, 58, 138, 0.08);
+            letter-spacing: -0.01em;
         }
         .courtify-auth-card {
             background: #ffffff;
             border: 1px solid rgba(148, 163, 184, 0.18);
             border-radius: 28px;
-            padding: 2rem;
+            padding: 1.85rem;
             box-shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
         }
         .courtify-auth-title {
@@ -276,11 +215,8 @@ def _inject_login_css():
         @media (max-width: 900px) {
             .courtify-brand,
             .courtify-auth-card {
-                padding: 1.5rem;
+                padding: 1.35rem;
                 border-radius: 22px;
-            }
-            .courtify-brand h1 {
-                font-size: 2rem;
             }
         }
         </style>
@@ -315,63 +251,16 @@ def _render_signed_in_state():
 
 
 def _render_brand_panel():
-    st.html(
+    st.markdown(
         """
+        <div class="courtify-brand">
         <div class="courtify-logo">
             <div class="courtify-logo-mark">C</div>
             <div>Courtify</div>
         </div>
-        <div class="courtify-eyebrow">Court booking platform</div>
-        <h1>Book your court.<br>Play your game.</h1>
         <p class="courtify-subheadline">
-            Courtify makes it effortless to find, book, and manage court time so you can
-            spend less time scheduling and more time playing.
+            Reserve Your Court. Play Your Game.
         </p>
-        """,
-    )
-    st.markdown(
-        """
-        <div class="courtify-section">
-            <div class="courtify-section-title">No more back-and-forth scheduling.</div>
-            <p class="courtify-section-copy">
-                Coordinating court time shouldn't feel like a full-time job. Courtify brings
-                real-time availability, seamless booking, and instant confirmations into one
-                simple experience.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    features = [
-        ("◌", "Real-time Availability", "See open slots instantly across all courts and facilities."),
-        ("⌁", "Flexible Booking", "Book by the hour or customize your time based on your schedule."),
-        ("△", "Smart Scheduling", "Dynamic time slots based on facility rules, availability, and demand."),
-        ("◍", "Seamless Payments", "Secure checkout with instant booking confirmation."),
-    ]
-    st.markdown(
-        "<div class='courtify-section'><div class='courtify-section-title'>Designed for modern racket-sport facilities.</div></div>",
-        unsafe_allow_html=True,
-    )
-    for icon, title, body in features:
-        left, right = st.columns([0.1, 0.9], gap="small")
-        with left:
-            st.markdown(
-                f"<div class='courtify-feature-icon' style='margin-top:0.1rem'>{icon}</div>",
-                unsafe_allow_html=True,
-            )
-        with right:
-            st.markdown(
-                f"<div><div class='courtify-section-title' style='margin-bottom:0.2rem;font-size:0.94rem'>{title}</div><p class='courtify-section-copy' style='margin-top:0'>{body}</p></div>",
-                unsafe_allow_html=True,
-            )
-    st.markdown(
-        """
-        <div class="courtify-operator-note">
-            <div class="courtify-section-title">Built for players. Designed for operators.</div>
-            <p class="courtify-section-copy">
-                Courtify helps facilities maximize utilization, manage schedules, and drive
-                revenue, all from a single platform.
-            </p>
         </div>
         """,
         unsafe_allow_html=True,
