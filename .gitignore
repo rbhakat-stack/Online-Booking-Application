@@ -2,3 +2,7 @@
 .env.*
 __pycache__/
 *.pyc
+
+
+Design Documents/Streamlit Config Creds.txt
+Design Documents/URL and Stripe CC Info.txt

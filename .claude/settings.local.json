@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python -c \":*)",
-      "WebFetch(domain:pickleplanner.com)"
+      "WebFetch(domain:pickleplanner.com)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

@@ -27,6 +27,57 @@ from utils.constants import BookingStatus
 logger = logging.getLogger(__name__)
 
 
+# ── Internal Helpers ─────────────────────────────────────────
+
+def _enrich_with_user_profiles(
+    bookings: list[dict],
+    fields: str = "id, full_name, email",
+) -> list[dict]:
+    """
+    Fetch user_profiles for every user_id in *bookings* and attach the profile
+    dict under the key ``"user_profiles"`` on each booking row.
+
+    Why this exists:
+        ``bookings.user_id`` is a FK to ``auth.users(id)``, **not** to
+        ``public.user_profiles(id)``.  PostgREST's embedded-resource syntax
+        (``user_profiles(full_name, email)`` in the SELECT string) only works
+        when a direct FK exists in the public schema.  Without it PostgREST
+        raises PGRST200 "Could not find a relationship".
+
+        Solution: fetch bookings without the join, collect unique user_ids,
+        query user_profiles separately, then merge in Python.
+
+    Args:
+        bookings: list of booking dicts (must each have a ``user_id`` key).
+        fields:   comma-separated column names to fetch from user_profiles.
+
+    Returns:
+        The same list, mutated in-place, with ``booking["user_profiles"]``
+        set to the matching profile dict (or ``{}`` if no profile found).
+    """
+    if not bookings:
+        return bookings
+
+    user_ids = list({b["user_id"] for b in bookings if b.get("user_id")})
+    if not user_ids:
+        return bookings
+
+    admin = get_admin_client()
+    resp = (
+        admin.table("user_profiles")
+        .select(fields)
+        .in_("id", user_ids)
+        .execute()
+    )
+    profiles: dict[str, dict] = {p["id"]: p for p in (resp.data or [])}
+
+    for booking in bookings:
+        uid = booking.get("user_id", "")
+        booking["user_profiles"] = profiles.get(uid, {})
+
+    return bookings
+
+
 # ── Dashboard ─────────────────────────────────────────────────
 
 def get_dashboard_stats(facility_id: str, timezone: str = "America/New_York") -> dict:
@@ -96,14 +147,13 @@ def get_todays_bookings(facility_id: str, timezone: str = "America/New_York") ->
     resp = admin.table("bookings") \
         .select("id, start_time_utc, end_time_utc, duration_minutes, status, total_amount, "
                 "notes, court_id, user_id, "
-                "courts(name, sport_type), "
-                "user_profiles(full_name, email)") \
+                "courts(name, sport_type)") \
         .eq("facility_id", facility_id) \
         .eq("booking_date", today) \
         .in_("status", [BookingStatus.CONFIRMED, BookingStatus.PENDING_PAYMENT]) \
         .order("start_time_utc") \
         .execute()
-    return resp.data or []
+    return _enrich_with_user_profiles(resp.data or [], fields="id, full_name, email")
 
 
 def get_recent_activity(facility_id: str, limit: int = 12) -> list[dict]:
@@ -111,14 +161,13 @@ def get_recent_activity(facility_id: str, limit: int = 12) -> list[dict]:
     admin = get_admin_client()
 
     resp = admin.table("bookings") \
-        .select("id, booking_date, status, total_amount, created_at, "
-                "courts(name, sport_type), "
-                "user_profiles(full_name, email)") \
+        .select("id, booking_date, status, total_amount, created_at, user_id, "
+                "courts(name, sport_type)") \
         .eq("facility_id", facility_id) \
         .order("created_at", desc=True) \
         .limit(limit) \
         .execute()
-    return resp.data or []
+    return _enrich_with_user_profiles(resp.data or [], fields="id, full_name, email")
 
 
 # ── Booking Management ────────────────────────────────────────
@@ -142,8 +191,7 @@ def search_bookings(
         .select("id, booking_date, start_time_utc, end_time_utc, duration_minutes, "
                 "status, total_amount, base_amount, discount_amount, notes, "
                 "admin_notes, stripe_payment_intent_id, created_at, user_id, "
-                "courts(name, sport_type, indoor), "
-                "user_profiles(full_name, email, phone)") \
+                "courts(name, sport_type, indoor)") \
         .eq("facility_id", facility_id) \
         .order("booking_date", desc=True) \
         .order("start_time_utc", desc=True) \
@@ -163,7 +211,7 @@ def search_bookings(
     if sport_type:
         rows = [r for r in rows if (r.get("courts") or {}).get("sport_type") == sport_type]
 
-    return rows
+    return _enrich_with_user_profiles(rows, fields="id, full_name, email, phone")
 
 
 def admin_cancel_booking(
@@ -183,7 +231,7 @@ def admin_cancel_booking(
 
     # Fetch booking
     resp = admin.table("bookings").select("*").eq("id", booking_id).maybe_single().execute()
-    booking = resp.data
+    booking = resp.data if resp is not None else None
     if not booking:
         return {"success": False, "message": "Booking not found.", "refund": None}
 
@@ -233,10 +281,97 @@ def add_admin_note(booking_id: str, note: str) -> bool:
 
 # ── Facility Configuration ────────────────────────────────────
 
+def create_facility(data: dict) -> dict:
+    """
+    Insert a new facility record.  Super-admin only — caller must enforce that.
+
+    ``data`` should contain at minimum ``name`` and ``timezone``.
+    All other fields (address, city, state, zip_code, phone, email) are optional.
+
+    A URL-safe slug is auto-generated from the name.  If the slug already exists
+    (UNIQUE constraint violation), a numeric suffix is appended automatically.
+
+    Returns the inserted facility row.
+    """
+    import re
+    admin = get_admin_client()
+
+    insert_data = {k: v for k, v in data.items() if v not in (None, "")}
+    insert_data.setdefault("is_active", True)
+
+    # Generate slug: lowercase, collapse non-alphanumeric runs to hyphens
+    raw = re.sub(r"[^a-z0-9]+", "-", insert_data.get("name", "facility").lower()).strip("-")
+
+    # Ensure uniqueness by checking existing slugs that start with this root
+    existing = (
+        admin.table("facilities")
+        .select("slug")
+        .like("slug", f"{raw}%")
+        .execute()
+    )
+    used_slugs = {r["slug"] for r in (existing.data or [])}
+    slug = raw
+    suffix = 2
+    while slug in used_slugs:
+        slug = f"{raw}-{suffix}"
+        suffix += 1
+    insert_data["slug"] = slug
+
+    resp = admin.table("facilities").insert(insert_data).execute()
+    if not resp.data:
+        raise RuntimeError("Facility insert returned no data.")
+
+    facility = resp.data[0]
+    fac_id = facility["id"]
+    logger.info(f"New facility created: {fac_id} — {insert_data.get('name')}")
+
+    # ── Seed facility_settings with safe defaults ──────────────
+    try:
+        admin.table("facility_settings").insert({
+            "facility_id":                    fac_id,
+            "min_booking_minutes":            60,
+            "booking_increment_minutes":      30,
+            "max_booking_hours":              4,
+            "hold_expiry_minutes":            10,
+            "booking_window_days":            30,
+            "buffer_minutes_between_bookings": 0,
+            "cancellation_window_hours":      24,
+            "partial_refund_window_hours":    12,
+            "partial_refund_percentage":      50,
+            "allow_same_day_booking":         True,
+            "require_membership":             False,
+        }).execute()
+        logger.info(f"Default facility_settings seeded for {fac_id}")
+    except Exception as e:
+        logger.warning(f"Could not seed facility_settings for {fac_id}: {e}")
+
+    # ── Seed facility_operating_hours (Mon–Sun, 8 AM – 10 PM) ─
+    from utils.constants import DAYS_OF_WEEK
+    try:
+        hours_records = [
+            {
+                "facility_id": fac_id,
+                "day_of_week": day,
+                "is_open":     True,
+                "open_time":   "08:00:00",
+                "close_time":  "22:00:00",
+            }
+            for day in DAYS_OF_WEEK
+        ]
+        admin.table("facility_operating_hours").insert(hours_records).execute()
+        logger.info(f"Default operating hours seeded for {fac_id}")
+    except Exception as e:
+        logger.warning(f"Could not seed facility_operating_hours for {fac_id}: {e}")
+
+    return facility
+
+
 def get_full_facility(facility_id: str) -> Optional[dict]:
     """Fetch full facility record for editing."""
     admin = get_admin_client()
     resp = admin.table("facilities").select("*").eq("id", facility_id).maybe_single().execute()
+    if resp is None:
+        return None
     return resp.data
 
 

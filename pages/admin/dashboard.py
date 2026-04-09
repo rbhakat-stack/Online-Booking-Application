@@ -20,6 +20,7 @@ from services.admin_service import (
     get_dashboard_stats,
     get_todays_bookings,
     get_recent_activity,
+    create_facility,
 )
 from db.supabase_client import get_admin_client
 from db.queries import get_admin_facilities, get_active_facilities
@@ -38,6 +39,69 @@ _SPORT_ICONS = {
     "pickleball": "🏓", "badminton": "🏸",
     "tennis": "🎾", "karate": "🥋", "multi-sport": "🏅",
 }
+
+
+@st.dialog("➕ Add New Facility", width="large")
+def _add_facility_dialog():
+    """Modal form for Super Admin to create a new facility."""
+    import pytz
+
+    st.markdown(
+        "<p style='color:#64748b;margin-bottom:1rem'>"
+        "Fill in the details below. The facility will be created immediately and "
+        "appear in the facility selector.</p>",
+        unsafe_allow_html=True,
+    )
+
+    with st.form("new_facility_form", border=False):
+        name = st.text_input("Facility Name *", placeholder="e.g. Downtown SportsPlex")
+
+        all_timezones = [
+            "America/New_York", "America/Chicago", "America/Denver",
+            "America/Los_Angeles", "America/Phoenix", "America/Anchorage",
+            "Pacific/Honolulu", "America/Toronto", "America/Vancouver",
+            "Europe/London", "Europe/Paris", "Asia/Kolkata",
+        ]
+        timezone = st.selectbox("Timezone *", options=all_timezones, index=0)
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            address = st.text_input("Street Address", placeholder="123 Main St")
+            city    = st.text_input("City", placeholder="New York")
+            phone   = st.text_input("Phone", placeholder="+1 (555) 000-0000")
+        with col_b:
+            state   = st.text_input("State / Province", placeholder="NY")
+            zipcode = st.text_input("Zip / Postal Code", placeholder="10001")
+            email   = st.text_input("Contact Email", placeholder="manager@example.com")
+
+        submitted = st.form_submit_button(
+            "Create Facility", type="primary", use_container_width=True
+        )
+
+    if submitted:
+        if not name.strip():
+            st.error("Facility Name is required.")
+            return
+
+        payload = {
+            "name":     name.strip(),
+            "timezone": timezone,
+            "address":  address.strip() or None,
+            "city":     city.strip()    or None,
+            "state":    state.strip()   or None,
+            "zip_code": zipcode.strip() or None,
+            "phone":    phone.strip()   or None,
+            "email":    email.strip()   or None,
+        }
+
+        try:
+            new_fac = create_facility(payload)
+            st.success(f"✅ Facility **{new_fac['name']}** created successfully!")
+            # Clear cached facility selection so the dropdown refreshes
+            st.session_state.pop("_admin_facility_id", None)
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Failed to create facility: {exc}")
 
 
 def render():
@@ -69,7 +133,12 @@ def render():
     # ── Page header ───────────────────────────────────────────
     today_str = format_date(date.today(), "%A, %B %d %Y")
 
-    col_hdr, col_sel = st.columns([3, 2])
+    if role == "super_admin":
+        col_hdr, col_sel, col_add = st.columns([3, 2, 1])
+    else:
+        col_hdr, col_sel = st.columns([3, 2])
+        col_add = None
+
     with col_hdr:
         st.markdown(
             f"""
@@ -94,6 +163,12 @@ def render():
             label_visibility="collapsed",
         )
         st.session_state["_admin_facility_id"] = fac_id
+
+    if col_add is not None:
+        with col_add:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("➕ Add Facility", use_container_width=True, type="secondary"):
+                _add_facility_dialog()
 
     fac = facility_map[fac_id]
     timezone = fac.get("timezone", "America/New_York")

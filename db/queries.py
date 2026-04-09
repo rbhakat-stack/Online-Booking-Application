@@ -41,6 +41,9 @@ def get_facility_by_id(client: Client, facility_id: str) -> Optional[dict]:
         .maybe_single()
         .execute()
     )
+    # .maybe_single() returns None (not a response) when no row found in some SDK versions
+    if response is None:
+        return None
     return response.data
 
 
@@ -52,6 +55,9 @@ def get_facility_settings(client: Client, facility_id: str) -> Optional[dict]:
         .maybe_single()
         .execute()
     )
+    # .maybe_single() returns None (not a response) when no row found in some SDK versions
+    if response is None:
+        return None
     return response.data
 
 
