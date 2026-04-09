@@ -27,14 +27,14 @@ from utils.constants import SessionKey
 # ── Page Config ───────────────────────────────────────────────
 # Must be the FIRST Streamlit call in the script
 st.set_page_config(
-    page_title="SportsPlex — Court Booking",
+    page_title="Courtify — Court Booking",
     page_icon="🏓",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
         "Get Help": None,
         "Report a bug": None,
-        "About": "**SportsPlex** — Sports court booking platform. Built with Streamlit & Supabase.",
+        "About": "**Courtify** — Sports court booking platform. Built with Streamlit & Supabase.",
     },
 )
 
@@ -231,7 +231,7 @@ with st.sidebar:
             ">🏓</div>
             <div style="font-weight:800;font-size:1.15rem;color:#f1f5f9;
                         letter-spacing:0.02em;margin-top:0.25rem">
-                SportsPlex
+                Courtify
             </div>
             <div style="font-size:0.72rem;color:rgba(255,255,255,0.4);
                         margin-top:0.1rem;letter-spacing:0.05em;text-transform:uppercase">

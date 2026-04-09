@@ -8,7 +8,7 @@ Import from here instead of hardcoding strings in business logic.
 from typing import Final
 
 # ── App ─────────────────────────────────────────────────────
-APP_NAME: Final = "SportsPlex"
+APP_NAME: Final = "Courtify"
 DEFAULT_TIMEZONE: Final = "America/New_York"
 CURRENCY: Final = "usd"
 CURRENCY_SYMBOL: Final = "$"

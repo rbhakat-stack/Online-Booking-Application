@@ -1,5 +1,5 @@
 """
-Home Page — SportsPlex Landing Page
+Home Page — Courtify Landing Page
 =====================================
 Public page (no auth required).
 Sections:
@@ -217,7 +217,7 @@ def _render_why_us():
             <div style="text-align:center;margin-bottom:2rem">
                 <div style="font-size:0.8rem;font-weight:700;letter-spacing:0.1em;
                             color:#0ea5e9;text-transform:uppercase;margin-bottom:0.5rem">
-                    Why SportsPlex?
+                    Why Courtify?
                 </div>
                 <h2 style="font-size:1.6rem;font-weight:800;color:#0f172a;margin:0">
                     Built for players, run by courts

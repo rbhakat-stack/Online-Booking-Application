@@ -83,7 +83,7 @@ def get_config() -> AppConfig:
         stripe_secret_key=required["STRIPE_SECRET_KEY"],
         stripe_publishable_key=required["STRIPE_PUBLISHABLE_KEY"],
         stripe_webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET", ""),
-        app_name=os.environ.get("APP_NAME", "SportsPlex"),
+        app_name=os.environ.get("APP_NAME", "Courtify"),
         app_env=os.environ.get("APP_ENV", "development"),
         app_url=os.environ.get("APP_URL", "http://localhost:8501"),
         default_timezone=os.environ.get("DEFAULT_TIMEZONE", "America/New_York"),

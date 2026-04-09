@@ -1,88 +1,430 @@
 """
-Login / Sign Up / Password Reset Page
-========================================
-Three-tab layout:
-  Tab 1 — Sign In      (email + password)
-  Tab 2 — Create Account (registration form with validation)
-  Tab 3 — Reset Password (sends Supabase magic link)
+Courtify Login / Sign Up / Password Reset Page
+==============================================
+UI-only redesign for the auth experience.
 
-After successful sign-in, user is redirected based on role:
-  - Admin → admin dashboard
-  - Player → availability page
+Important:
+- No backend/auth logic changes
+- Existing forms, buttons, and flows remain intact
+- Only presentation, layout, branding, and hierarchy are updated
 """
 
 import streamlit as st
-from services.auth_service import get_auth_service, AuthError
 from components.auth_guard import show_auth_status_sidebar
+from services.auth_service import AuthError, get_auth_service
 
 
 def render():
     auth_service = get_auth_service()
     show_auth_status_sidebar()
+    _inject_login_css()
 
-    # Already authenticated → show quick nav
+    # Keep the existing post-login shortcuts, only restyled.
     if auth_service.is_authenticated():
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.html(
-                """
-                <div style="text-align:center;padding:2rem 0 1.5rem">
-                    <div style="font-size:3rem;margin-bottom:0.5rem">✅</div>
-                    <h3 style="color:#0f172a;margin:0 0 0.25rem">You're signed in!</h3>
-                    <p style="color:#64748b;margin:0">Where would you like to go?</p>
-                </div>
-                """
-            )
-            if st.button("📅 Book a Court", type="primary", use_container_width=True):
-                st.switch_page("pages/availability.py")
-            st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
-            if st.button("📋 My Bookings", use_container_width=True):
-                st.switch_page("pages/my_bookings.py")
+        _render_signed_in_state()
         return
 
-    # ── Auth card ─────────────────────────────────────────────
-    col1, col2, col3 = st.columns([1, 2, 1])
+    brand_col, auth_col = st.columns([1.15, 0.95], gap="large")
+    with brand_col:
+        _render_brand_panel()
+    with auth_col:
+        _render_auth_panel(auth_service)
+
+
+def _inject_login_css():
+    """Scoped CSS for the split-screen Courtify auth layout."""
+    st.markdown(
+        """
+        <style>
+        .courtify-shell {
+            min-height: calc(100vh - 8rem);
+            display: flex;
+            align-items: center;
+        }
+        .courtify-brand {
+            background:
+                radial-gradient(circle at top right, rgba(20, 184, 166, 0.18), transparent 34%),
+                radial-gradient(circle at bottom left, rgba(30, 58, 138, 0.14), transparent 32%),
+                linear-gradient(180deg, #f8fbff 0%, #f4f7fb 100%);
+            border: 1px solid rgba(30, 58, 138, 0.08);
+            border-radius: 28px;
+            padding: 2.5rem;
+            box-shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .courtify-brand::after {
+            content: "";
+            position: absolute;
+            inset: auto -3rem -3rem auto;
+            width: 12rem;
+            height: 12rem;
+            border-radius: 50%;
+            border: 1px solid rgba(20, 184, 166, 0.12);
+            background: rgba(20, 184, 166, 0.05);
+        }
+        .courtify-logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-weight: 800;
+            color: #0f172a;
+            letter-spacing: -0.02em;
+            margin-bottom: 1.5rem;
+        }
+        .courtify-logo-mark {
+            width: 2.8rem;
+            height: 2.8rem;
+            border-radius: 0.95rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1e3a8a 0%, #14b8a6 100%);
+            color: white;
+            font-size: 1.2rem;
+            box-shadow: 0 10px 24px rgba(30, 58, 138, 0.22);
+        }
+        .courtify-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.35rem 0.8rem;
+            border-radius: 999px;
+            background: rgba(20, 184, 166, 0.09);
+            color: #0f766e;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+        }
+        .courtify-brand h1 {
+            margin: 0;
+            color: #0f172a;
+            font-size: clamp(2rem, 4vw, 3.4rem);
+            line-height: 1.05;
+            letter-spacing: -0.04em;
+        }
+        .courtify-subheadline {
+            color: #475569;
+            font-size: 1rem;
+            line-height: 1.7;
+            max-width: 40rem;
+            margin: 1rem 0 1.75rem;
+        }
+        .courtify-section {
+            margin-top: 1.35rem;
+            padding-top: 1.15rem;
+            border-top: 1px solid rgba(148, 163, 184, 0.18);
+        }
+        .courtify-section-title {
+            color: #0f172a;
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.45rem;
+        }
+        .courtify-section-copy {
+            color: #475569;
+            font-size: 0.95rem;
+            line-height: 1.65;
+            margin: 0;
+        }
+        .courtify-feature-list {
+            display: grid;
+            gap: 0.85rem;
+            margin-top: 0.9rem;
+        }
+        .courtify-feature {
+            display: grid;
+            grid-template-columns: 2.3rem 1fr;
+            gap: 0.85rem;
+            align-items: start;
+        }
+        .courtify-feature-icon {
+            width: 2.3rem;
+            height: 2.3rem;
+            border-radius: 0.8rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: white;
+            border: 1px solid rgba(30, 58, 138, 0.08);
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+            font-size: 1rem;
+        }
+        .courtify-feature strong {
+            display: block;
+            color: #0f172a;
+            font-size: 0.94rem;
+            margin-bottom: 0.15rem;
+        }
+        .courtify-feature span {
+            color: #475569;
+            font-size: 0.88rem;
+            line-height: 1.55;
+        }
+        .courtify-operator-note {
+            margin-top: 1.35rem;
+            padding: 1rem 1.1rem;
+            border-radius: 1rem;
+            background: linear-gradient(180deg, rgba(30, 58, 138, 0.04), rgba(20, 184, 166, 0.06));
+            border: 1px solid rgba(30, 58, 138, 0.08);
+        }
+        .courtify-auth-card {
+            background: #ffffff;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 28px;
+            padding: 2rem;
+            box-shadow: 0 24px 64px rgba(15, 23, 42, 0.08);
+        }
+        .courtify-auth-title {
+            color: #0f172a;
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            margin: 0;
+        }
+        .courtify-auth-copy {
+            color: #64748b;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            margin: 0.55rem 0 0;
+        }
+        .courtify-security-note {
+            margin-top: 1rem;
+            text-align: center;
+            color: #64748b;
+            font-size: 0.8rem;
+        }
+        .courtify-divider {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+            margin: 1rem 0 0.3rem;
+            color: #94a3b8;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .courtify-divider::before,
+        .courtify-divider::after {
+            content: "";
+            height: 1px;
+            flex: 1;
+            background: rgba(148, 163, 184, 0.25);
+        }
+        .courtify-helper {
+            color: #64748b;
+            font-size: 0.82rem;
+            text-align: center;
+            margin-top: 0.65rem;
+        }
+        .courtify-password-note {
+            background: #f8fafc;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 14px;
+            padding: 0.8rem 0.95rem;
+            font-size: 0.8rem;
+            color: #64748b;
+            margin-top: 0.55rem;
+        }
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 0.45rem;
+            background: #f8fafc;
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            border-radius: 16px;
+            padding: 0.3rem;
+        }
+        .stTabs [data-baseweb="tab"] {
+            height: 2.7rem;
+            border-radius: 12px;
+            padding: 0 1rem;
+            color: #475569;
+            font-weight: 600;
+        }
+        .stTabs [aria-selected="true"] {
+            background: white;
+            color: #1e3a8a;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+        }
+        .stTextInput label, .stCheckbox label {
+            color: #0f172a !important;
+            font-weight: 600 !important;
+        }
+        .stTextInput input {
+            border-radius: 14px !important;
+            border: 1px solid rgba(148, 163, 184, 0.28) !important;
+            padding-top: 0.8rem !important;
+            padding-bottom: 0.8rem !important;
+            background: #ffffff !important;
+        }
+        .stTextInput input:focus {
+            border-color: #14b8a6 !important;
+            box-shadow: 0 0 0 1px #14b8a6 !important;
+        }
+        .stButton > button {
+            border-radius: 14px !important;
+            min-height: 2.9rem !important;
+            font-weight: 700 !important;
+            transition: transform 120ms ease, box-shadow 120ms ease !important;
+        }
+        .stButton > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+        }
+        @media (max-width: 900px) {
+            .courtify-brand,
+            .courtify-auth-card {
+                padding: 1.5rem;
+                border-radius: 22px;
+            }
+            .courtify-brand h1 {
+                font-size: 2rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_signed_in_state():
+    col1, col2, col3 = st.columns([1, 1.25, 1], gap="large")
     with col2:
-        st.html(
+        st.markdown(
             """
-            <div style="text-align:center;padding:1.75rem 0 1.25rem">
-                <div style="font-size:2.5rem;margin-bottom:0.5rem">🏓</div>
-                <h2 style="color:#0f172a;font-weight:800;margin:0">Welcome to SportsPlex</h2>
-                <p style="color:#64748b;margin:0.4rem 0 0">Sign in or create your account below</p>
+            <div class="courtify-auth-card" style="text-align:center;">
+                <div class="courtify-logo" style="justify-content:center;">
+                    <div class="courtify-logo-mark">C</div>
+                    <div>Courtify</div>
+                </div>
+                <div style="font-size:2.5rem;margin-bottom:0.4rem;">✓</div>
+                <h3 style="color:#0f172a;margin:0 0 0.25rem;">You're signed in</h3>
+                <p class="courtify-auth-copy" style="margin-top:0;">
+                    Choose where you'd like to go next.
+                </p>
             </div>
-            """
+            """,
+            unsafe_allow_html=True,
         )
+        if st.button("Book a Court", type="primary", use_container_width=True):
+            st.switch_page("pages/availability.py")
+        if st.button("My Bookings", use_container_width=True):
+            st.switch_page("pages/my_bookings.py")
 
-        # One-time messages from redirects
-        msg = st.session_state.get("auth_success_message")
-        if msg:
-            st.success(msg)
-            st.session_state.auth_success_message = None
 
-        tab_signin, tab_signup, tab_reset = st.tabs(
-            ["🔑 Sign In", "📝 Create Account", "🔒 Reset Password"]
-        )
+def _render_brand_panel():
+    st.html(
+        """
+        <div class="courtify-logo">
+            <div class="courtify-logo-mark">C</div>
+            <div>Courtify</div>
+        </div>
+        <div class="courtify-eyebrow">Court booking platform</div>
+        <h1>Book your court.<br>Play your game.</h1>
+        <p class="courtify-subheadline">
+            Courtify makes it effortless to find, book, and manage court time so you can
+            spend less time scheduling and more time playing.
+        </p>
+        """,
+    )
+    st.markdown(
+        """
+        <div class="courtify-section">
+            <div class="courtify-section-title">No more back-and-forth scheduling.</div>
+            <p class="courtify-section-copy">
+                Coordinating court time shouldn't feel like a full-time job. Courtify brings
+                real-time availability, seamless booking, and instant confirmations into one
+                simple experience.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    features = [
+        ("◌", "Real-time Availability", "See open slots instantly across all courts and facilities."),
+        ("⌁", "Flexible Booking", "Book by the hour or customize your time based on your schedule."),
+        ("△", "Smart Scheduling", "Dynamic time slots based on facility rules, availability, and demand."),
+        ("◍", "Seamless Payments", "Secure checkout with instant booking confirmation."),
+    ]
+    st.markdown(
+        "<div class='courtify-section'><div class='courtify-section-title'>Designed for modern racket-sport facilities.</div></div>",
+        unsafe_allow_html=True,
+    )
+    for icon, title, body in features:
+        left, right = st.columns([0.1, 0.9], gap="small")
+        with left:
+            st.markdown(
+                f"<div class='courtify-feature-icon' style='margin-top:0.1rem'>{icon}</div>",
+                unsafe_allow_html=True,
+            )
+        with right:
+            st.markdown(
+                f"<div><div class='courtify-section-title' style='margin-bottom:0.2rem;font-size:0.94rem'>{title}</div><p class='courtify-section-copy' style='margin-top:0'>{body}</p></div>",
+                unsafe_allow_html=True,
+            )
+    st.markdown(
+        """
+        <div class="courtify-operator-note">
+            <div class="courtify-section-title">Built for players. Designed for operators.</div>
+            <p class="courtify-section-copy">
+                Courtify helps facilities maximize utilization, manage schedules, and drive
+                revenue, all from a single platform.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        with tab_signin:
-            _render_sign_in(auth_service)
-        with tab_signup:
-            _render_sign_up(auth_service)
-        with tab_reset:
-            _render_reset(auth_service)
 
-        st.html(
-            """
-            <div style="text-align:center;font-size:0.78rem;color:#94a3b8;margin-top:1rem">
-                🔒 Your data is secured with Supabase Auth &amp; Stripe-grade encryption
+def _render_auth_panel(auth_service):
+    st.markdown(
+        """
+        <div class="courtify-auth-card">
+            <div class="courtify-eyebrow">Welcome back</div>
+            <h2 class="courtify-auth-title">Access Courtify</h2>
+            <p class="courtify-auth-copy">
+                Sign in, create your account, or reset your password without leaving the page.
+            </p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    msg = st.session_state.get("auth_success_message")
+    if msg:
+        st.success(msg)
+        st.session_state.auth_success_message = None
+
+    tab_signin, tab_signup, tab_reset = st.tabs(
+        ["Sign In", "Create Account", "Reset Password"]
+    )
+
+    with tab_signin:
+        _render_sign_in(auth_service)
+    with tab_signup:
+        _render_sign_up(auth_service)
+    with tab_reset:
+        _render_reset(auth_service)
+
+    st.markdown(
+        """
+            <div class="courtify-security-note">
+                Secure authentication powered by Supabase and encrypted payments through Stripe.
             </div>
-            """
-        )
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
-# ── Tab: Sign In ──────────────────────────────────────────────
+# Tab: Sign In
 
 def _render_sign_in(auth_service):
-    st.html("<div style='margin-bottom:0.75rem;font-weight:600;color:#0f172a'>Sign in to your account</div>")
+    st.markdown(
+        "<div class='courtify-section-title' style='margin-bottom:0.75rem;'>Sign in to your account</div>",
+        unsafe_allow_html=True,
+    )
 
     with st.form("login_form", clear_on_submit=False):
         email = st.text_input("Email Address", placeholder="you@example.com",
@@ -96,9 +438,10 @@ def _render_sign_in(auth_service):
     if submitted:
         _do_sign_in(auth_service, email, password)
 
-    st.html(
-        "<p style='text-align:center;font-size:0.82rem;color:#94a3b8;margin-top:0.75rem'>"
-        "New here? Switch to the <strong>Create Account</strong> tab.</p>"
+    st.markdown("<div class='courtify-divider'>OR</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='courtify-helper'>New here? Switch to the <strong>Create Account</strong> tab.</p>",
+        unsafe_allow_html=True,
     )
 
 
@@ -127,7 +470,10 @@ def _do_sign_in(auth_service, email: str, password: str):
 # ── Tab: Sign Up ──────────────────────────────────────────────
 
 def _render_sign_up(auth_service):
-    st.html("<div style='margin-bottom:0.75rem;font-weight:600;color:#0f172a'>Create a new account</div>")
+    st.markdown(
+        "<div class='courtify-section-title' style='margin-bottom:0.75rem;'>Create a new account</div>",
+        unsafe_allow_html=True,
+    )
 
     with st.form("signup_form", clear_on_submit=False):
         full_name = st.text_input("Full Name *", placeholder="Jane Smith")
@@ -135,7 +481,10 @@ def _render_sign_up(auth_service):
         phone     = st.text_input("Phone Number", placeholder="(555) 123-4567",
                                   help="Optional — for booking reminders")
 
-        st.html("<div style='font-size:0.82rem;color:#64748b;margin:0.25rem 0'>Password — min. 8 chars, 1 uppercase, 1 number</div>")
+        st.markdown(
+            "<div class='courtify-helper' style='text-align:left;margin:0.15rem 0 0.45rem;'>Password - min. 8 chars, 1 uppercase, 1 number</div>",
+            unsafe_allow_html=True,
+        )
         password = st.text_input("Password *", type="password",
                                  placeholder="Create a strong password",
                                  label_visibility="collapsed")
@@ -151,14 +500,13 @@ def _render_sign_up(auth_service):
     if submitted:
         _do_sign_up(auth_service, full_name, email, phone, password, confirm, terms)
 
-    st.html(
+    st.markdown(
         """
-        <div style="background:#f8fafc;border-radius:10px;padding:0.75rem 1rem;
-                    font-size:0.8rem;color:#64748b;margin-top:0.5rem;border:1px solid #e2e8f0">
-            <strong>Password requirements:</strong>&nbsp;
-            8+ characters &nbsp;&middot;&nbsp; 1 uppercase &nbsp;&middot;&nbsp; 1 number
+        <div class="courtify-password-note">
+            <strong>Password requirements:</strong> 8+ characters, 1 uppercase, 1 number.
         </div>
-        """
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -200,7 +548,7 @@ def _do_sign_up(auth_service, full_name, email, phone, password, confirm, terms)
                     str(result["user"].id), result["session"].access_token
                 )
                 st.session_state.profile = profile
-                st.success("🎉 Account created! Welcome to SportsPlex.")
+                st.success("Account created! Welcome to Courtify.")
                 st.rerun()
             else:
                 st.success(result["message"])
@@ -217,8 +565,14 @@ def _do_sign_up(auth_service, full_name, email, phone, password, confirm, terms)
 # ── Tab: Reset Password ───────────────────────────────────────
 
 def _render_reset(auth_service):
-    st.html("<div style='margin-bottom:0.75rem;font-weight:600;color:#0f172a'>Reset your password</div>")
-    st.html("<p style='font-size:0.875rem;color:#64748b'>Enter your email and we'll send a secure reset link.</p>")
+    st.markdown(
+        "<div class='courtify-section-title' style='margin-bottom:0.5rem;'>Reset your password</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='courtify-auth-copy' style='margin-bottom:0.9rem;'>Enter your email and we'll send a secure reset link.</p>",
+        unsafe_allow_html=True,
+    )
 
     with st.form("reset_form"):
         email = st.text_input("Email Address", placeholder="you@example.com")
